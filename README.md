@@ -25,35 +25,40 @@ npm run preview
 
 - Mapa inicial con Kanto disponible y Johto/Hoenn bloqueados.
 - Selección gratuita de un inicial la primera vez que se abre cada región; la elección queda guardada en `localStorage` y no se puede volver a reclamar como gratuita.
-- Flujo independiente del render: elegir región → elegir inicial → entrar a partida.
-- Escena Three.js en perspectiva isométrica suave, con bosque procedural y un companion placeholder hecho con geometría.
-- `WASD` o flechas para moverse, ratón para apuntar sobre el suelo 3D, clic izquierdo para disparar el rayo de prueba, `Espacio` para saltar y `Esc` para pausar.
-- El control ya deja preparado el deslizamiento al mantener Espacio en compañeros de tipo Volador.
-- Pokédex de los nueve iniciales regionales, pantalla de mejoras permanentes y escaparate del gachapón con las probabilidades del GDD. La compra de mejoras y el guardado están conectados; la entrada de monedas/tickets/gemas llegará con recompensas de partida.
-- Persistencia local con normalización defensiva del perfil.
-- Pruebas de Node para la selección, bloqueo/desbloqueo de regiones, guardado y compra de mejoras.
-- Build estático de Vite preparado para publicarse en GitHub Pages; la automatización de despliegue puede añadirse como workflow de Actions.
+- Flujo independiente del render: elegir región → elegir inicial → entrar a partida → informe de expedición.
+- Escena Three.js en perspectiva isométrica suave, con bosque procedural, compañero geométrico, hordas regionales y orbes de experiencia 3D.
+- `WASD` o flechas para moverse, ratón para apuntar sobre el suelo 3D, clic izquierdo (o mantener pulsado) para disparar `Psicorrayo` con daño, perforación y empuje, `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
+- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`) y aparición del jefe regional (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`).
+- Sistema de vida (`PS`) con ventana de gracia tras recibir contacto, retiro táctico con botín desde la pausa y pantalla de resultados con recompensas reales (monedas, tickets y gemas).
+- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Psíquico`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`).
+- Pokédex de los nueve iniciales regionales, pantalla de mejoras permanentes conectada a las estadísticas de combate y escaparate del gachapón con las probabilidades del GDD.
+- Persistencia local con normalización defensiva del perfil y notas de versión en [`PATCH_NOTES.md`](./PATCH_NOTES.md).
+- Pruebas de Node para flujo regional, hordas, daño de `Psicorrayo`, vida, orbes de XP y elección de mejoras.
+- Build estático de Vite preparado para publicarse en GitHub Pages.
 
 ## Arquitectura
 
 ```text
 index.html
+PATCH_NOTES.md
 src/
   main.js                    # composición: conecta menú, flujo y motor
   data/
     regions.js               # regiones, jefes, enemigos e iniciales
-    economy.js               # rarezas y tabla de mejoras
+    economy.js               # rarezas y tabla de mejoras permanentes
+    combat.js                # perfiles de hordas, Psicorrayo y mejoras 1 de 3
   flow/
     ProfileStore.js          # perfil persistente, con validación/migración básica
     RegionFlow.js            # state machine independiente de Three/DOM
   menu/
-    MenuController.js        # mapa, Pokédex, mejoras, gacha, starter pick y HUD
+    MenuController.js        # mapa, Pokédex, mejoras, gacha, HUD y modal de nivel
   game/
-    GameApp.js               # escena Three.js, loop, cámara y efectos
-    HybridControls.js        # teclado, raycast del mouse, salto y pausa
+    RunSession.js            # simulación pura v0.2: hordas, daño, PS, XP y mejoras
+    GameApp.js               # escena Three.js, loop, cámara, enemigos, orbes y efectos
+    HybridControls.js        # teclado, raycast del mouse, salto, pausa y atajos 1-3
 tests/
   region-flow.test.js
-.github/workflows/deploy.yml
+  combat-v02.test.js
 ```
 
 **Regla de dependencia:** el menú no importa Three.js. `RegionFlow` devuelve un `runConfig` serializable; `GameApp` consume esa configuración. Así se puede sustituir el motor o probar el flujo en Node sin abrir WebGL.

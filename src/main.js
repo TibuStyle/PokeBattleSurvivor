@@ -17,7 +17,9 @@ async function startGame(runConfig) {
     const { GameApp } = await gameModulePromise;
     game = new GameApp(gameRoot, {
       onPauseChange: (paused) => menu?.setPaused(paused),
-      onHudUpdate: (time) => menu?.updateHud(time),
+      onHudUpdate: (snapshot) => menu?.updateHud(snapshot),
+      onLevelUp: (choices) => menu?.setLevelUpChoices(choices),
+      onRunEnd: (result) => menu?.finishRun(result),
     });
   }
   game.start(runConfig);
@@ -28,6 +30,11 @@ menu = new MenuController(uiRoot, flow, {
   onReturnToHub: () => game?.stop(),
   onSetPause: (paused) => game?.setPaused(paused),
   onResume: () => game?.setPaused(false),
+  onChooseRunUpgrade: (upgradeId) => game?.chooseUpgrade(upgradeId),
+  onExtractRun: () => {
+    const result = game?.extractCurrentRun();
+    if (result) menu?.finishRun(result);
+  },
 });
 
 window.addEventListener('pagehide', () => {
