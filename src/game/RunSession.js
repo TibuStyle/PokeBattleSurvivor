@@ -1,4 +1,4 @@
-import { TYPE_SYNERGIES, LEVEL_UP_SKILLS, calculateDarkTypeCritChance, getEquippedItemModifiers } from '../data/gddSystems.js';
+import { TYPE_SYNERGIES, LEVEL_UP_SKILLS, calculateDarkTypeCritChance, getEquippedItemModifiers, getGachaMoveset } from '../data/gddSystems.js';
 import {
   BASE_PLAYER_STATS,
   HORDE_CONFIG,
@@ -64,7 +64,7 @@ export class RunSession {
       : HORDE_CONFIG.maxActiveEnemies;
 
     // Movimientos del compañero: básico (automático) y especial (Q)
-    this.moveset = getStarterMoveset(this.runConfig.starter.id);
+    this.moveset = getGachaMoveset(this.runConfig.starter.id) ?? getStarterMoveset(this.runConfig.starter.id);
 
     this.nextEntityId = 1;
     this.elapsedSeconds = 0;
@@ -113,6 +113,10 @@ export class RunSession {
 
     this.enemies = [];
     this.orbs = [];
+    this.frostNodes = [];
+    this.frostSpawnTimer = 0;
+    this.bossTelegraphs = [];
+    this.bossPatternTimer = 2.8;
     this.miniBossSpawned = false;
     this.miniBossDefeated = false;
     this.bossSpawned = false;
@@ -547,7 +551,18 @@ export class RunSession {
       const effectiveness = getTypeMultiplier(move.type, enemy.types);
       // Impactos repetidos sobre el mismo enemigo (haces perforantes) hacen la mitad de daño.
       const repeatFactor = target.repeatIndex === 0 ? 1 : 0.5;
-      const damage = Math.max(1, Math.round(derived.power * stab * effectiveness * repeatFactor));
+      let darkCritMult = 1;
+      if (attackerTypes.includes('Siniestro') && this.player.hp < this.player.maxHp) {
+        const { critChance, critDamage } = calculateDarkTypeCritChance(
+          this.player.hp,
+          this.player.maxHp,
+          Boolean(this.runConfig.starter.isLegendary),
+        );
+        if (this.random() < critChance) {
+          darkCritMult = critDamage;
+        }
+      }
+      const damage = Math.max(1, Math.round(derived.power * stab * effectiveness * repeatFactor * darkCritMult));
 
       enemy.hp = Math.max(0, enemy.hp - damage);
       enemy.hitFlash = 0.18;
@@ -574,6 +589,69 @@ export class RunSession {
         effectiveness,
         stab: stab > 1,
       });
+    }
+
+    // Pasiva Tipo Eléctrico: Rebote automático (y Pararrayos en Cadena si es Legendario)
+    if (slot === 'basic' && attackerTypes.includes('Eléctrico') && hits.length > 0) {
+      const synergy = TYPE_SYNERGIES.Eléctrico;
+      const maxBounces = this.runConfig.starter.isLegendary
+        ? synergy.legendaryPassive.chainMaxTargets
+        : synergy.bounceCount;
+      const alreadyHitIds = new Set(hits.map((h) => h.enemyId));
+      let lastSource = hits[0];
+
+      for (let b = 0; b < maxBounces; b += 1) {
+        let closest = null;
+        let closestDist = synergy.bounceRange;
+        for (const candidate of attackable) {
+          if (candidate.hp <= 0 || alreadyHitIds.has(candidate.id)) continue;
+          const dist = Math.hypot(candidate.x - lastSource.x, candidate.z - lastSource.z);
+          if (dist <= closestDist) {
+            closestDist = dist;
+            closest = candidate;
+          }
+        }
+        if (!closest) break;
+
+        alreadyHitIds.add(closest.id);
+        const eff = getTypeMultiplier('Eléctrico', closest.types);
+        const bounceDamage = Math.max(
+          1,
+          Math.round(derived.power * stab * eff * synergy.bounceDamageDecay),
+        );
+        closest.hp = Math.max(0, closest.hp - bounceDamage);
+        closest.hitFlash = 0.18;
+        this.totalDamageDealt += bounceDamage;
+
+        beams.push({
+          startX: lastSource.x,
+          startZ: lastSource.z,
+          endX: closest.x,
+          endZ: closest.z,
+          width: 0.45,
+          color: '#f7d02c',
+          moveId: 'electric-chain',
+        });
+
+        const bounceHit = {
+          enemyId: closest.id,
+          species: closest.species,
+          isElite: !!closest.isElite,
+          isMiniBoss: !!closest.isMiniBoss,
+          isBoss: !!closest.isBoss,
+          x: closest.x,
+          z: closest.z,
+          damage: bounceDamage,
+          remainingHp: closest.hp,
+          defeated: closest.hp <= 0,
+          moveId: move.id,
+          color: '#f7d02c',
+          effectiveness: eff,
+          stab: true,
+        };
+        hits.push(bounceHit);
+        lastSource = bounceHit;
+      }
     }
 
     if (hits.length > 0) {
@@ -955,6 +1033,23 @@ export class RunSession {
       const normZ = moveLen > 1 ? moveZ / moveLen : moveZ;
       this.player.x = clamp(this.player.x + normX * this.stats.moveSpeed * dt, -this.worldLimit, this.worldLimit);
       this.player.z = clamp(this.player.z + normZ * this.stats.moveSpeed * dt, -this.worldLimit, this.worldLimit);
+
+      // Pasiva Tipo Hielo: Rastro de escarcha al caminar
+      if (this.runConfig.starter.types.includes('Hielo')) {
+        this.frostSpawnTimer -= dt;
+        if (this.frostSpawnTimer <= 0) {
+          this.frostSpawnTimer = 0.35;
+          const iceSynergy = TYPE_SYNERGIES.Hielo;
+          this.frostNodes.push({
+            id: `frost-${this.nextEntityId++}`,
+            x: this.player.x,
+            z: this.player.z,
+            radius: iceSynergy.trailRadius,
+            remaining: iceSynergy.trailDurationSec,
+            duration: iceSynergy.trailDurationSec,
+          });
+        }
+      }
     }
 
     if (Number.isFinite(input.height)) {
@@ -1045,9 +1140,64 @@ export class RunSession {
   #updateEnemies(dt, events) {
     const count = this.enemies.length;
 
+    // Actualizar duración de nodos de escarcha (Tipo Hielo)
+    for (let f = this.frostNodes.length - 1; f >= 0; f -= 1) {
+      this.frostNodes[f].remaining -= dt;
+      if (this.frostNodes[f].remaining <= 0) {
+        this.frostNodes.splice(f, 1);
+      }
+    }
+
+    // Actualizar patrones Bullet Hell 3D del Jefe Regional (áreas marcadas en el suelo)
+    const activeBoss = this.activeBoss;
+    if (activeBoss) {
+      this.bossPatternTimer -= dt;
+      if (this.bossPatternTimer <= 0) {
+        this.bossPatternTimer = 4.2;
+        this.bossTelegraphs.push({
+          id: `telegraph-${this.nextEntityId++}`,
+          x: this.player.x,
+          z: this.player.z,
+          radius: 3.2,
+          duration: 1.35,
+          remaining: 1.35,
+          damage: Math.round(activeBoss.contactDamage * 0.85),
+          color: activeBoss.accent ?? '#ff7be5',
+        });
+      }
+    }
+
+    for (let t = this.bossTelegraphs.length - 1; t >= 0; t -= 1) {
+      const tele = this.bossTelegraphs[t];
+      tele.remaining -= dt;
+      if (tele.remaining <= 0) {
+        this.bossTelegraphs.splice(t, 1);
+        const distToPlayer = Math.hypot(this.player.x - tele.x, this.player.z - tele.z);
+        // Se puede esquivar saliendo del área o saltando/planeando en 3D (height > 0.85)
+        if (distToPlayer <= tele.radius && this.player.height <= 0.85) {
+          const hitRes = this.damagePlayer(tele.damage, activeBoss);
+          if (hitRes.damaged) {
+            events.playerDamaged = { ...hitRes, fromTelegraph: true };
+          }
+        }
+      }
+    }
+
     for (let i = 0; i < count; i += 1) {
       const enemy = this.enemies[i];
       enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+
+      // Comprobar si el enemigo pisa un nodo de escarcha (Tipo Hielo)
+      let speedMultiplier = 1;
+      if (this.frostNodes.length > 0) {
+        for (const node of this.frostNodes) {
+          if (Math.hypot(enemy.x - node.x, enemy.z - node.z) <= node.radius + enemy.radius) {
+            speedMultiplier = 1 - TYPE_SYNERGIES.Hielo.trailSlowRatio;
+            enemy.frostExposure = (enemy.frostExposure ?? 0) + dt;
+            break;
+          }
+        }
+      }
 
       const dx = this.player.x - enemy.x;
       const dz = this.player.z - enemy.z;
@@ -1056,8 +1206,8 @@ export class RunSession {
       const dirZ = dz / dist;
 
       enemy.rotationY = Math.atan2(dirX, dirZ);
-      enemy.x += (dirX * enemy.speed + enemy.knockbackX) * dt;
-      enemy.z += (dirZ * enemy.speed + enemy.knockbackZ) * dt;
+      enemy.x += (dirX * enemy.speed * speedMultiplier + enemy.knockbackX) * dt;
+      enemy.z += (dirZ * enemy.speed * speedMultiplier + enemy.knockbackZ) * dt;
 
       const decay = Math.exp(-dt * (enemy.isBoss ? 4 : 9));
       enemy.knockbackX *= decay;
