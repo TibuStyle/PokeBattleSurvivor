@@ -1,6 +1,6 @@
 # PokeBattle Survivor — prototipo 3D
 
-Un action roguelite de hordas en navegador al estilo *Vampire Survivors*. El vertical slice actual (v0.3) incluye **flujo de región → inicial → partida**, disparo automático de Psicorrayo, hordas con enemigos élite, un centinela a los 4 minutos, jefe regional a los ~10 minutos, orbes de XP, elección de 1 entre 3 mejoras por nivel, esquiva (`Shift`) y retirada táctica.
+Un action roguelite de hordas en navegador al estilo *Vampire Survivors*. El vertical slice actual (v0.4) incluye **flujo de región → inicial → partida**, movimientos propios de cada inicial con **disparo automático** y **especial con `Q`** (con enfriamiento visible), efectividad de tipos y STAB, cámara de tercera persona, hordas con enemigos élite, un centinela a los 4 minutos, jefe regional a los ~10 minutos, orbes de XP, elección de 1 entre 3 mejoras por nivel, esquiva (`Shift`) y retirada táctica.
 
 > La escena usa criaturas geométricas originales como placeholder; no incluye modelos ni texturas extraídas de Pokémon.
 
@@ -26,14 +26,17 @@ npm run preview
 - Mapa inicial con Kanto disponible y Johto/Hoenn bloqueados.
 - Selección gratuita de un inicial la primera vez que se abre cada región; la elección queda guardada en `localStorage` y no se puede volver a reclamar como gratuita.
 - Flujo independiente del render: elegir región → elegir inicial → entrar a partida → informe de expedición.
-- Escena Three.js en perspectiva isométrica suave, con bosque procedural, compañero geométrico, hordas regionales y orbes de experiencia 3D.
-- `WASD` o flechas para moverse, ratón para apuntar sobre el suelo 3D, **disparo automático** de `Psicorrayo`, `Shift` para **esquivar** (con invulnerabilidad breve), `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
-- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`), **enemigos élite** con auras (Celeridad/Masa/Furia) desde la oleada 3, un **centinela regional** a los 4 minutos como hito y el **jefe regional** (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`) tras derrotar al centinela.
+- Escena Three.js con cámara de **tercera persona baja y detrás del compañero**, bosque procedural, compañero geométrico, hordas regionales y orbes de experiencia 3D.
+- `WASD` o flechas para moverse **según la cámara** (`W` avanza hacia donde mira la cámara), ratón para apuntar sobre el suelo 3D, **disparo automático** del básico, `Q` para lanzar el **especial** (enfriamiento visible en el panel), `Shift` para **esquivar** (con invulnerabilidad breve), `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
+- Movimientos propios de los nueve iniciales (p. ej. Charmander: **Ascuas** automática y **Lanzallamas** en `Q`). Tres formas de ataque: **haz** perforante, **abanico** de varios objetivos y **área** alrededor del compañero.
+- Tabla de tipos de 18 tipos: ×2, ×0,5 y ×0 (inmunidad), dobles tipos multiplicados y **STAB ×1,5** cuando el movimiento coincide con un tipo del compañero. El HUD muestra la eficacia del último golpe.
+- Pokédex por región con los movimientos, la cobertura súper eficaz y la descripción de cada compañero (solo si está desbloqueado).
+- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`, con tipos propios), **enemigos élite** con auras (Celeridad/Masa/Furia) desde la oleada 3, un **centinela regional** a los 4 minutos como hito y el **jefe regional** (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`) tras derrotar al centinela.
 - Sistema de vida (`PS`) con ventana de gracia tras recibir contacto, **retiro táctico** con botín parcial desde la pausa y pantalla de resultados con recompensas reales (monedas, tickets y gemas).
-- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Psíquico`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`, **Impulso Etéreo** para la esquiva).
+- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Ofensivo`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`, **Impulso Etéreo** para la esquiva).
 - Pokédex de los nueve iniciales regionales, pantalla de mejoras permanentes conectada a las estadísticas de combate y escaparate del gachapón con las probabilidades del GDD.
 - Persistencia local con normalización defensiva del perfil y notas de versión en [`PATCH_NOTES.md`](./PATCH_NOTES.md).
-- Pruebas de Node para flujo regional, hordas, daño de `Psicorrayo`, vida, orbes de XP y elección de mejoras.
+- Pruebas de Node para flujo regional, hordas, movimientos y daño (STAB, efectividad, formas de ataque), tabla de tipos, especial con enfriamiento, cámara, vida, orbes de XP, elección de mejoras y Pokédex.
 - Build estático de Vite preparado para publicarse en GitHub Pages.
 
 ## Arquitectura
@@ -46,20 +49,29 @@ src/
   data/
     regions.js               # regiones, jefes, enemigos e iniciales
     economy.js               # rarezas y tabla de mejoras permanentes
-    combat.js                # perfiles de hordas, élites, centinelas, Psicorrayo y mejoras
+    combat.js                # perfiles de hordas (con tipos), élites, centinelas y mejoras
+    typeChart.js             # tipos, tabla de eficacia, STAB y colores
+    moves.js                 # catálogo de movimientos y movesets de los nueve iniciales
   flow/
     ProfileStore.js          # perfil persistente, con validación/migración básica
     RegionFlow.js            # state machine independiente de Three/DOM
   menu/
     MenuController.js        # mapa, Pokédex, mejoras, gacha, HUD, centinela/jefe y modal de nivel
   game/
-    RunSession.js            # simulación pura v0.3: hordas, élites, centinela, dash, PS, XP y mejoras
+    RunSession.js            # simulación pura v0.4: hordas, ataques, STAB, efectividad, élites, centinela, dash, PS, XP y mejoras
+    attacks.js               # geometría pura de haces, abanicos y áreas
+    cameraRig.js             # cámara de tercera persona y movimiento relativo a la cámara (sin Three.js)
     GameApp.js               # escena Three.js, loop, cámara, enemigos, orbes, auras y efectos
-    HybridControls.js        # teclado, raycast del ratón, salto, esquiva (Shift), pausa y atajos 1-3
+    HybridControls.js        # teclado, raycast del ratón, salto, esquiva (Shift), especial (Q), pausa y atajos 1-3
 tests/
   region-flow.test.js
   combat-v02.test.js
   combat-v03.test.js
+  typechart-v04.test.js
+  moves-v04.test.js
+  attacks-v04.test.js
+  camera-v04.test.js
+  pokedex-v04.test.js
 ```
 
 **Regla de dependencia:** el menú no importa Three.js. `RegionFlow` devuelve un `runConfig` serializable; `GameApp` consume esa configuración. Así se puede sustituir el motor o probar el flujo en Node sin abrir WebGL.
@@ -84,7 +96,26 @@ flow.completeRun({
 
 ### Controles híbridos
 
-`HybridControls` convierte la posición de pantalla del cursor a coordenadas normalizadas, lanza un rayo desde la cámara y busca su intersección con el plano `y = 0`. La diferencia entre ese punto y la posición del jugador produce la dirección horizontal de apuntado. El loop consulta el vector de movimiento y vuelve a calcular el objetivo cuando la cámara sigue al jugador.
+`HybridControls` convierte la posición de pantalla del cursor a coordenadas normalizadas, lanza un rayo desde la cámara y busca su intersección con el plano `y = 0`. La diferencia entre ese punto y la posición del jugador produce la dirección horizontal de apuntado, que define hacia dónde disparan los movimientos.
+
+### Cámara de tercera persona (v0.4)
+
+La cámara va detrás y algo por encima del compañero (distancia ~7,4, altura ~2,35) y mira ~2,6 m por delante, a la altura del torso. Se suaviza con `smoothing` y sube levemente al saltar. El yaw de la cámara sigue al apuntado **solo mientras el cursor se mueve** y fuera de una zona muerta de ~18°. Si siguiera al apuntado en todo momento, un cursor fijo fuera del centro haría girar la cámara sin parar, porque el apuntado gira con ella. Todos los parámetros están en `src/game/cameraRig.js` (`CAMERA_RIG`).
+
+### Movimientos y daño (v0.4)
+
+`RunSession` calcula el daño de cada impacto como:
+
+```text
+daño = round(potencia × 0,5 × (1 + 0,25 × rango de poder) × STAB × efectividad × repetición)
+```
+
+- **STAB ×1,5** si el tipo del movimiento coincide con un tipo del compañero.
+- **Efectividad** según la tabla de tipos (`typeChart.js`): ×2, ×0,5 o ×0. Un enemigo inmune no participa en el ataque.
+- **Repetición ×0,5** si un haz perforante vuelve a golpear al mismo enemigo.
+- **Formas**: `beam` (haz perforante), `cone` (abanico que alcanza hasta `maxTargets`) y `burst` (área alrededor del compañero).
+
+El básico se dispara solo; el especial se lanza con `Q` y tiene su propio enfriamiento, que se muestra en el panel del HUD.
 
 ## Análisis de diseño y mejoras sugeridas
 

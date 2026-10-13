@@ -1,14 +1,16 @@
 import * as THREE from 'three';
 import { HybridControls } from './HybridControls.js';
 import { RunSession } from './RunSession.js';
+import { CAMERA_RIG, followCameraYaw, nextFollowTimer, thirdPersonCameraPose } from './cameraRig.js';
 
 const WORLD_LIMIT = 52;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 /**
- * Escena 3D Three.js para PokeBattle Survivor v0.3:
- * bosque procedural, compañero, hordas regionales con élites, minijefe a los 4 min,
- * Psicorrayo automático, orbes de experiencia, esquiva (Shift) y retirada táctica.
+ * Escena 3D Three.js para PokeBattle Survivor v0.4:
+ * bosque procedural, compañero con movimientos propios, hordas regionales con élites,
+ * minijefe a los 4 min, ataque automático y especial (Q) con enfriamiento visible,
+ * cámara baja de tercera persona, orbes de experiencia, esquiva (Shift) y retirada táctica.
  */
 export class GameApp {
   constructor(
@@ -37,13 +39,15 @@ export class GameApp {
     this.renderer.domElement.className = 'game-canvas';
     this.renderer.domElement.setAttribute(
       'aria-label',
-      'Arena 3D: WASD mueve, ratón apunta, Shift esquiva, Espacio salta, Esc pausa y 1-3 elige mejoras',
+      'Arena 3D: WASD mueve, ratón apunta, Q usa el especial, Shift esquiva, Espacio salta, Esc pausa y 1-3 elige mejoras',
     );
     this.renderer.domElement.tabIndex = 0;
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = null;
     this.camera = null;
+    this.cameraYaw = Math.PI;
+    this.cameraFollowTimer = 0;
     this.player = null;
     this.playerBodyMaterial = null;
     this.playerRing = null;
@@ -119,9 +123,8 @@ export class GameApp {
     this.scene.background = new THREE.Color('#111a18');
     this.scene.fog = new THREE.Fog('#111a18', 32, 110);
 
-    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 180);
-    this.camera.position.set(0, 18, 14);
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(CAMERA_RIG.fov, window.innerWidth / window.innerHeight, 0.1, 180);
+    this.cameraYaw = Math.PI;
 
     const ambient = new THREE.HemisphereLight('#d6f4dc', '#304437', 2.25);
     this.scene.add(ambient);
@@ -147,6 +150,7 @@ export class GameApp {
     this.addForest(palette);
     this.addPlayer(runConfig.starter);
     this.addTargetMarker();
+    this.updateCamera(0, true);
     this.handleResize();
   }
 
@@ -249,7 +253,7 @@ export class GameApp {
 
   performDash() {
     if (!this.running || this.paused || !this.session || this.session.status !== 'running') return;
-    const movement = this.controls?.getMovementVector();
+    const movement = this.controls?.getMovementVector(this.cameraYaw);
     let dirX = movement?.x ?? 0;
     let dirZ = movement?.z ?? 0;
     if (Math.hypot(dirX, dirZ) < 0.001 && this.controls) {
@@ -304,6 +308,7 @@ export class GameApp {
     this.updateEffects(delta);
 
     if (this.session.status === 'level-up') {
+      this.controls.consumeSpecialRequest();
       this.playerRing.rotation.z += delta * 1.1;
       this.syncOrbs(delta);
       return;
@@ -325,8 +330,10 @@ export class GameApp {
     if (this.height === 0) this.verticalVelocity = 0;
 
     this.controls.updateAim();
-    const movement = this.controls.getMovementVector();
+    // Movimiento relativo a la cámara de tercera persona (W avanza hacia donde se mira)
+    const movement = this.controls.getMovementVector(this.cameraYaw);
     const aimDirection = this.controls.aimDirection;
+    const specialPressed = this.controls.consumeSpecialRequest();
 
     // Consumir el dash solicitado desde el teclado (Shift)
     if (this.controls.consumeDashRequest()) {
@@ -337,8 +344,10 @@ export class GameApp {
       movement,
       aimDirection,
       height: this.height,
+      specialPressed,
     });
 
+    if (events.attacks.length > 0) this.spawnAttackEffects(events.attacks);
     if (events.beams.length > 0) this.spawnBeamEffects(events.beams);
     if (events.hits.length > 0) this.spawnHitEffects(events.hits);
     if (events.defeated.length > 0) this.spawnDefeatEffects(events.defeated);
@@ -384,14 +393,14 @@ export class GameApp {
     this.playerShadow.material.opacity = 0.42 - clamp01(this.height / 5) * 0.22;
     this.playerRing.rotation.z += delta * 0.55;
 
-    const cameraTarget = new THREE.Vector3(this.player.position.x, 0, this.player.position.z);
-    const desiredCameraPosition = new THREE.Vector3(
-      this.player.position.x,
-      18 + this.height * 0.3,
-      this.player.position.z + 14,
-    );
-    this.camera.position.lerp(desiredCameraPosition, 1 - Math.exp(-delta * 4.5));
-    this.camera.lookAt(cameraTarget);
+    // La cámara sigue al apuntado solo mientras el cursor se mueve (y fuera de la zona muerta)
+    const cursorMoved = this.controls.consumePointerMoved();
+    this.cameraFollowTimer = nextFollowTimer(this.cameraFollowTimer, cursorMoved, delta);
+    if (this.cameraFollowTimer > 0) {
+      const aimYaw = Math.atan2(aimDirection.x, aimDirection.z);
+      this.cameraYaw = followCameraYaw(this.cameraYaw, aimYaw, delta);
+    }
+    this.updateCamera(delta);
 
     this.syncEnemies(delta);
     this.syncOrbs(delta);
@@ -407,6 +416,55 @@ export class GameApp {
     if (this.session.isFinished) {
       this.finishRun();
     }
+  }
+
+  /** Cámara baja detrás del compañero, con suavizado. `snap` la coloca sin transición. */
+  updateCamera(delta, snap = false) {
+    if (!this.camera || !this.player) return;
+    const pose = thirdPersonCameraPose(
+      { x: this.player.position.x, z: this.player.position.z },
+      this.cameraYaw,
+      this.height,
+    );
+    const desired = new THREE.Vector3(pose.position.x, pose.position.y, pose.position.z);
+    if (snap) {
+      this.camera.position.copy(desired);
+    } else {
+      this.camera.position.lerp(desired, 1 - Math.exp(-delta * CAMERA_RIG.smoothing));
+    }
+    this.camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
+  }
+
+  /** Efectos de los movimientos: anillo de área (Bomba Lodo, Giro Fuego...) y pulso al lanzar un especial. */
+  spawnAttackEffects(attacks) {
+    if (!this.scene || !this.player) return;
+    for (const attack of attacks) {
+      if (attack.area) {
+        this.spawnRingEffect(attack.area.x, attack.area.z, attack.area.color, attack.area.radius, 0.42, 1.2);
+      }
+      if (attack.slot === 'special') {
+        this.spawnRingEffect(this.player.position.x, this.player.position.z, attack.color, 0.9, 0.3, 2.4);
+      }
+    }
+  }
+
+  spawnRingEffect(x, z, color = '#ffffff', radius = 1, ttl = 0.3, grow = 1.5) {
+    if (!this.scene) return;
+    const inner = Math.max(0.05, radius * 0.86);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(inner, radius, 40),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 0.07, z);
+    this.scene.add(ring);
+    this.effects.push({ mesh: ring, ttl, remaining: ttl, grow });
   }
 
   updateWorldMarkers() {
@@ -709,7 +767,7 @@ export class GameApp {
 
       const auraRadius = Math.max(0.12, beamData.width * 0.24);
       const auraMaterial = new THREE.MeshBasicMaterial({
-        color: '#ff7be5',
+        color: beamData.color ?? '#ff7be5',
         transparent: true,
         opacity: 0.58,
         depthWrite: false,
@@ -731,7 +789,7 @@ export class GameApp {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.18, 0.46, 20),
         new THREE.MeshBasicMaterial({
-          color: '#ff9ef0',
+          color: hit.color ?? '#ff9ef0',
           transparent: true,
           opacity: 0.88,
           side: THREE.DoubleSide,
@@ -741,7 +799,8 @@ export class GameApp {
       ring.rotation.x = -Math.PI / 2;
       ring.position.set(hit.x, 0.12, hit.z);
       this.scene.add(ring);
-      this.effects.push({ mesh: ring, ttl: 0.2, remaining: 0.2, grow: 2.2 });
+      const grow = hit.effectiveness > 1 ? 3.4 : 2.2;
+      this.effects.push({ mesh: ring, ttl: 0.2, remaining: 0.2, grow });
     }
   }
 
@@ -901,6 +960,9 @@ export class GameApp {
       snapshot.activeEnemies,
       snapshot.dashReady ? '1' : '0',
       Math.round((snapshot.dashCooldown ?? 0) * 10) / 10,
+      Math.round((snapshot.basicAttack?.cooldownRemaining ?? 0) * 10),
+      Math.round((snapshot.specialAttack?.cooldownRemaining ?? 0) * 10),
+      snapshot.lastAttackSeq ?? 0,
       snapshot.miniBoss?.hp ?? 0,
       snapshot.boss?.hp ?? 0,
       snapshot.activeUpgrades.map((u) => `${u.id}:${u.rank}`).join(','),
@@ -931,6 +993,8 @@ export class GameApp {
     if (!this.running || this.paused === paused) return;
     this.paused = paused;
     if (paused) this.controls?.clearKeys();
+    // Una pulsación de Q hecha durante la pausa no debe disparar el especial al reanudar
+    this.controls?.consumeSpecialRequest();
     this.onPauseChange(paused);
   }
 

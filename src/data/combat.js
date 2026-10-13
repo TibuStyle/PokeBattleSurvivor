@@ -11,20 +11,6 @@ export const BASE_PLAYER_STATS = {
   dashInvulnerabilitySeconds: 0.32,
 };
 
-export const PSYBEAM_BASE = {
-  id: 'psybeam',
-  name: 'Psicorrayo',
-  damage: 28,
-  cooldown: 0.42,
-  range: 11.5,
-  width: 0.78,
-  knockback: 2.5,
-  beams: 1,
-  pierce: 3,
-  spreadRadians: 0.18,
-  color: '#ff7be5',
-};
-
 export const HORDE_CONFIG = {
   initialEnemies: 4,
   baseSpawnInterval: 2.1,
@@ -42,6 +28,7 @@ export const HORDE_CONFIG = {
 export const ENEMY_PROFILES = {
   Caterpie: {
     name: 'Caterpie',
+    types: ['Bicho'],
     hp: 36,
     speed: 2.45,
     contactDamage: 10,
@@ -53,6 +40,7 @@ export const ENEMY_PROFILES = {
   },
   Weedle: {
     name: 'Weedle',
+    types: ['Bicho', 'Veneno'],
     hp: 30,
     speed: 2.95,
     contactDamage: 12,
@@ -64,6 +52,7 @@ export const ENEMY_PROFILES = {
   },
   Spinarak: {
     name: 'Spinarak',
+    types: ['Bicho', 'Veneno'],
     hp: 44,
     speed: 2.85,
     contactDamage: 13,
@@ -75,6 +64,7 @@ export const ENEMY_PROFILES = {
   },
   Hoothoot: {
     name: 'Hoothoot',
+    types: ['Normal', 'Volador'],
     hp: 52,
     speed: 3.1,
     contactDamage: 14,
@@ -86,6 +76,7 @@ export const ENEMY_PROFILES = {
   },
   Poochyena: {
     name: 'Poochyena',
+    types: ['Siniestro'],
     hp: 58,
     speed: 3.3,
     contactDamage: 16,
@@ -97,6 +88,7 @@ export const ENEMY_PROFILES = {
   },
   Numel: {
     name: 'Numel',
+    types: ['Fuego', 'Tierra'],
     hp: 74,
     speed: 2.3,
     contactDamage: 18,
@@ -141,6 +133,7 @@ export const ELITE_AURAS = {
 export const MINIBOSS_PROFILES = {
   kanto: {
     name: 'Onix centinela',
+    types: ['Roca', 'Tierra'],
     hp: 280,
     speed: 2.35,
     contactDamage: 18,
@@ -153,6 +146,7 @@ export const MINIBOSS_PROFILES = {
   },
   johto: {
     name: 'Ursaring centinela',
+    types: ['Normal'],
     hp: 340,
     speed: 2.5,
     contactDamage: 20,
@@ -165,6 +159,7 @@ export const MINIBOSS_PROFILES = {
   },
   hoenn: {
     name: 'Aggron centinela',
+    types: ['Acero', 'Roca'],
     hp: 400,
     speed: 2.4,
     contactDamage: 22,
@@ -180,6 +175,7 @@ export const MINIBOSS_PROFILES = {
 export const BOSS_PROFILES = {
   Mewtwo: {
     name: 'Mewtwo',
+    types: ['Psíquico'],
     hp: 420,
     speed: 2.65,
     contactDamage: 24,
@@ -190,6 +186,7 @@ export const BOSS_PROFILES = {
   },
   'Ho-Oh / Lugia': {
     name: 'Ho-Oh / Lugia',
+    types: ['Volador'],
     hp: 520,
     speed: 2.8,
     contactDamage: 26,
@@ -200,6 +197,7 @@ export const BOSS_PROFILES = {
   },
   Groudon: {
     name: 'Groudon',
+    types: ['Tierra'],
     hp: 640,
     speed: 2.55,
     contactDamage: 30,
@@ -212,31 +210,31 @@ export const BOSS_PROFILES = {
 
 export const RUN_UPGRADES = [
   {
-    id: 'psybeamPower',
-    name: 'Foco Psíquico',
-    category: 'Psicorrayo',
+    id: 'attackPower',
+    name: 'Foco Ofensivo',
+    category: 'Ataque',
     icon: '◈',
     maxRank: 5,
-    description: '+25% de daño de Psicorrayo y +1 objetivo perforado.',
+    description: '+25% de daño de ataques básicos y especiales; +1 objetivo perforado en haces.',
   },
   {
-    id: 'psybeamCadence',
+    id: 'attackCadence',
     name: 'Pulso Mental',
-    category: 'Psicorrayo',
+    category: 'Ataque',
     icon: 'ϟ',
     maxRank: 5,
-    description: '−15% de enfriamiento de Psicorrayo.',
+    description: '−15% de enfriamiento de ataques básicos y especiales.',
   },
   {
-    id: 'psybeamPrism',
+    id: 'attackPrism',
     name: 'Prisma Psíquico',
-    category: 'Psicorrayo',
+    category: 'Ataque',
     icon: '❖',
     maxRank: 3,
-    description: '+1 haz adicional en abanico y +12% de alcance.',
+    description: '+1 haz adicional, +1 objetivo en abanicos y +12% de alcance.',
   },
   {
-    id: 'psybeamWave',
+    id: 'attackWave',
     name: 'Onda Telequinética',
     category: 'Control',
     icon: '◎',

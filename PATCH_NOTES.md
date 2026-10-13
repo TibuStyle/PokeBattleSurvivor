@@ -1,5 +1,60 @@
 # Notas de Parche — PokeBattle Survivor
 
+## v0.4.0 — Movimientos propios, tipos, especial con Q y cámara de tercera persona
+
+Esta versión sustituye el Psicorrayo común por un conjunto de movimientos propios para cada inicial, añade tipos con efectividad y STAB, y lleva la cámara detrás del compañero.
+
+### 1. Movimientos propios de cada inicial
+- Cada inicial tiene un **ataque básico** (automático) y un **especial** (`Q`). Son los nueve iniciales regionales:
+  - **Bulbasaur**: Látigo Cepa / Bomba Lodo.
+  - **Charmander**: Ascuas / Lanzallamas.
+  - **Squirtle**: Pistola Agua / Hidrobomba.
+  - **Chikorita**: Hoja Afilada / Rayo Solar.
+  - **Cyndaquil**: Ascuas / Giro Fuego.
+  - **Totodile**: Pistola Agua / Cascada.
+  - **Treecko**: Absorber / Megaagotar.
+  - **Torchic**: Picotazo / Rueda Fuego.
+  - **Mudkip**: Disparo Lodo / Surf.
+- Psicorrayo permanece en el catálogo (`src/data/moves.js`) pero **no está asignado a ningún inicial**.
+- Hay tres formas de ataque: **haz** perforante, **abanico** (`cone`, hasta `maxTargets` enemigos) y **área** alrededor del compañero (`burst`).
+- La Pokédex y la pantalla de elección de inicial muestran los dos movimientos, su tipo, potencia, enfriamiento y descripción.
+
+### 2. Tipos, efectividad y STAB
+- Nueva tabla de **18 tipos** (`src/data/typeChart.js`) con ×2, ×0,5 y ×0 (inmunidad). Los tipos defensores combinados multiplican sus efectividades (Fuego contra Bicho/Acero = ×4).
+- Fórmula de daño por impacto: `round(potencia × 0,5 × (1 + 0,25 × rango de poder) × STAB × efectividad)`.
+- **STAB ×1,5** cuando el tipo del movimiento coincide con un tipo del compañero.
+- Los enemigos inmunes se excluyen antes de resolver la forma del ataque. Un haz que vuelve a golpear al mismo enemigo hace la mitad de daño.
+- Los enemigos tienen tipos propios: Caterpie (Bicho); Weedle y Spinarak (Bicho/Veneno); Hoothoot (Normal/Volador); Poochyena (Siniestro); Numel (Fuego/Tierra); Onix (Roca/Tierra); Ursaring (Normal); Aggron (Acero/Roca); Mewtwo (Psíquico); Groudon (Tierra). El jefe Ho-Oh / Lugia se simplifica a Volador.
+
+### 3. Especial con Q y enfriamiento visible
+- `Q` lanza el especial del compañero. Si sigue en enfriamiento, la pulsación se rechaza y el HUD lo indica.
+- El panel de ataques del HUD muestra cada movimiento con su tecla, su barra de enfriamiento y el tiempo restante. El último golpe muestra su eficacia (`Muy eficaz`, `Poco eficaz`, `Sin efecto`) y si tuvo STAB.
+- El básico sigue siendo automático.
+
+### 4. Cámara de tercera persona
+- La cámara queda **detrás y baja** respecto al compañero (distancia ~7,4, altura base ~2,35, leve subida al saltar) y mira un poco por delante del personaje. Antes era cenital.
+- El movimiento es **relativo a la cámara**: `W` avanza hacia donde mira la cámara.
+- **La cámara sigue al apuntado solo mientras el cursor se mueve**, fuera de una zona muerta de ~18°. Seguirlo siempre hacía girar la cámara sin parar cuando el cursor quedaba fijo fuera del centro.
+- Parámetros en `src/game/cameraRig.js` (`CAMERA_RIG`) y funciones puras, probadas sin Three.js.
+
+### 5. Mejoras de partida renombradas
+- Las mejoras de partida pasan a nombres genéricos: `attackPower` (Foco Ofensivo, antes Foco Psíquico), `attackCadence`, `attackPrism` y `attackWave`.
+- Las mejoras permanentes conservan sus ids. Las mejoras de partida no se guardan en el perfil, así que el renombre no afecta a partidas guardadas.
+
+### 6. Pokédex e interfaz
+- La Pokédex agrupa los compañeros por región. Cada tarjeta muestra sus movimientos, su cobertura súper eficaz y su estado, pero **los movimientos solo aparecen si el compañero está desbloqueado**.
+- La pantalla de elección de inicial muestra los movimientos de cada compañero antes de elegir.
+- El pie del hub indica `PROTOTIPO 0.4`.
+
+### 7. Pruebas y arquitectura
+- Nuevas suites: `typechart-v04` (tabla de tipos), `moves-v04` (movesets y parámetros), `attacks-v04` (daño, STAB, formas, especial y enfriamiento), `camera-v04` (cámara y controles) y `pokedex-v04` (Pokédex e interfaz).
+- `combat-v02` y `combat-v03` se migran a la nueva API (`firePrimary` / `cooldowns.basic`).
+- La suite completa pasa con **60 pruebas** (18 de versiones anteriores + 42 nuevas).
+- `RunSession` expone `fireAttack(slot)`, `castSpecial()` y un snapshot con `basicAttack`, `specialAttack` y `lastAttackSeq`.
+- `package.json` y `package-lock.json` pasan a **0.4.0**.
+
+---
+
 ## v0.3.0 — Esquiva, élites, centinela a los 4 min y retirada táctica
 
 Este parche amplía el bucle de supervivencia con herramientas de supervivencia, amenazas diferenciadas y un arco de partida con hito y salida opcional.
