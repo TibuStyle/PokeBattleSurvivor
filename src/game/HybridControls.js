@@ -1,12 +1,12 @@
 /**
  * src/game/HybridControls.js
- * Compatible al 100% con los tests unitarios actuales de PokeBattleSurvivor (camera-v04 / skills-v05)
- * y ampliado con las mecánicas del GDD 3D:
- * - WASD relativo a la cámara.
- * - Puntería con el cursor del mouse en 3D (Raycasting / plano del suelo) + Clic Izquierdo para disparar habilidades direccionales.
- * - Salto (Espacio) y Planeo / Glide (mantener Espacio en el aire para Tipo Volador).
- * - Habilidad de Estado / Buff activo (Tecla E o Clic Derecho, ej. Danza Espada, bloqueable por Cinta Elegida).
- * - Esquiva / Dash (Shift) y selección de mejoras (1, 2, 3).
+ * Controles Híbridos 3D (WASD + Mouse Pointer Lock / Cursor Aim + Salto/Planeo + Estado):
+ * - 100% compatible con todas las llamadas de GameApp.js y cameraRig.js:
+ *   getMovementVector(yaw), getAimDirection(), consumeJumpRequest(), isJumpHeld(),
+ *   consumeSpecialRequest(), consumeDashRequest(), clearKeys(), releasePointerLock(),
+ *   setMouseSensitivity(), dispose().
+ * - Incluye soporte para Habilidades de Estado (Tecla E / Clic Derecho, ej. Danza Espada),
+ *   bloqueables cuando el jugador equipa Cinta Elegida.
  */
 import {
   MOUSE_LOOK,
@@ -16,7 +16,10 @@ import {
   normalizeSensitivity,
 } from './cameraRig.js';
 
-const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
+const MOVEMENT_CODES = new Set([
+  'KeyW', 'KeyA', 'KeyS', 'KeyD',
+  'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight',
+]);
 const DASH_CODES = new Set(['ShiftLeft', 'ShiftRight']);
 const JUMP_CODES = new Set(['Space']);
 const STATE_BUFF_CODES = new Set(['KeyE']);
@@ -33,14 +36,30 @@ export class HybridControls {
   constructor({
     element,
     cameraYaw = Math.PI,
-    cameraPitch = -0.22,
-    sensitivity = MOUSE_LOOK.SENSITIVITY_DEFAULT,
-    useCursorAim = true,
+    cameraPitch = -0.08,
+    mouseSensitivity = MOUSE_LOOK.defaultSensitivity,
+    sensitivity,
+    onPointerLockChange = () => {},
+    onCameraLook = () => {},
+    canUseSpecial = () => true,
+    canUseDash = () => true,
+    onLockedAbility = () => {},
+    onPause = () => {},
+    onSelectUpgrade = () => {},
+    useCursorAim = false,
     enabled = true,
   } = {}) {
     this.element = element || (typeof document !== 'undefined' ? document.body : null);
     this.enabled = Boolean(enabled);
     this.useCursorAim = Boolean(useCursorAim);
+
+    this.onPointerLockChange = onPointerLockChange;
+    this.onCameraLook = onCameraLook;
+    this.canUseSpecial = canUseSpecial;
+    this.canUseDash = canUseDash;
+    this.onLockedAbility = onLockedAbility;
+    this.onPause = onPause;
+    this.onSelectUpgrade = onSelectUpgrade;
 
     this.activeKeys = new Set();
     this.pendingAttack = false;
@@ -57,15 +76,13 @@ export class HybridControls {
       stateSkill: true,
     };
 
-    // Estado de equipamiento que afecta controles (ej. Cinta Elegida bloquea Movimientos de Estado)
+    // Restricción de Cinta Elegida (bloquea Movimientos de Estado)
     this.blocksStateMoves = false;
 
     this.cameraYaw = cameraYaw;
     this.cameraPitch = cameraPitch;
-    this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
-    this.mouseSensitivity = normalizeSensitivity(sensitivity);
+    this.mouseSensitivity = normalizeSensitivity(sensitivity ?? mouseSensitivity);
 
-    // Coordenadas del cursor normalizadas (-1 a +1) y vector de puntería en el plano XZ
     this.cursorNDC = { x: 0, y: 0 };
     this.aimDirection = forwardFromYaw(cameraYaw);
 
@@ -127,67 +144,98 @@ export class HybridControls {
     this.blocksStateMoves = Boolean(blocksStateMoves);
   }
 
+  setMouseSensitivity(value) {
+    this.mouseSensitivity = normalizeSensitivity(value);
+    return this.mouseSensitivity;
+  }
+
   requestPointerLock() {
-    if (
-      !this.useCursorAim &&
-      typeof document !== 'undefined' &&
-      document.pointerLockElement !== this.element &&
-      this.element?.requestPointerLock
-    ) {
+    if (typeof document === 'undefined' || !this.element) return;
+    if (!this.element.requestPointerLock) {
+      this.onPointerLockChange(false, { unsupported: true });
+      return;
+    }
+    if (document.pointerLockElement !== this.element) {
       try {
         this.element.requestPointerLock();
       } catch {
-        // Ignorar rechazo del navegador
+        this.onPointerLockChange(false, { error: true });
+      }
+    }
+  }
+
+  releasePointerLock() {
+    if (typeof document !== 'undefined' && document.pointerLockElement === this.element && document.exitPointerLock) {
+      try {
+        document.exitPointerLock();
+      } catch {
+        // Ignorar
       }
     }
   }
 
   exitPointerLock() {
-    if (typeof document !== 'undefined' && document.pointerLockElement === this.element && document.exitPointerLock) {
-      document.exitPointerLock();
-    }
+    this.releasePointerLock();
   }
 
   handlePointerLockChange() {
-    if (typeof document !== 'undefined' && document.pointerLockElement === this.element) {
-      this.mouseLookMode = MOUSE_LOOK.MODE_LOCKED;
-    } else {
-      this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
-    }
+    const locked = typeof document !== 'undefined' && document.pointerLockElement === this.element;
+    this.onPointerLockChange(locked, {});
   }
 
   handlePointerLockError() {
-    this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
+    this.onPointerLockChange(false, { error: true });
   }
 
   handleKeyDown(e) {
     if (!this.enabled) return;
+
+    if (e.code === 'Escape') {
+      this.onPause?.();
+      return;
+    }
 
     if (MOVEMENT_CODES.has(e.code)) {
       this.activeKeys.add(e.code);
     }
 
     if (JUMP_CODES.has(e.code)) {
+      e.preventDefault?.();
       if (!this.activeKeys.has(e.code)) {
         this.pendingJump = true;
       }
       this.activeKeys.add(e.code);
     }
 
-    if (e.code === 'KeyQ' && this.unlocks.attack) {
-      this.pendingAttack = true;
+    if (e.code === 'KeyQ') {
+      if (this.canUseSpecial() && this.unlocks.attack) {
+        this.pendingAttack = true;
+      } else {
+        this.onLockedAbility?.('special');
+      }
     }
 
-    if (STATE_BUFF_CODES.has(e.code) && this.unlocks.stateSkill && !this.blocksStateMoves) {
-      this.pendingStateSkill = true;
+    if (STATE_BUFF_CODES.has(e.code)) {
+      if (this.unlocks.stateSkill && !this.blocksStateMoves) {
+        this.pendingStateSkill = true;
+      } else {
+        this.onLockedAbility?.('state');
+      }
     }
 
-    if (DASH_CODES.has(e.code) && this.unlocks.dash) {
-      this.pendingDash = true;
+    if (DASH_CODES.has(e.code)) {
+      e.preventDefault?.();
+      if (this.canUseDash() || this.unlocks.dash) {
+        this.pendingDash = true;
+      } else {
+        this.onLockedAbility?.('dash');
+      }
     }
 
     if (e.code in UPGRADE_KEY_INDEX) {
-      this.pendingUpgradeIndex = UPGRADE_KEY_INDEX[e.code];
+      const idx = UPGRADE_KEY_INDEX[e.code];
+      this.pendingUpgradeIndex = idx;
+      this.onSelectUpgrade?.(idx);
     }
   }
 
@@ -202,12 +250,8 @@ export class HybridControls {
     if (e.button === 0) {
       this.isPrimaryMouseDown = true;
       this.requestPointerLock();
-      if (this.unlocks.attack) {
-        this.pendingAttack = true;
-        this.pendingAimedShot = true;
-      }
+      this.pendingAimedShot = true;
     } else if (e.button === 2) {
-      // Clic Derecho: Activar habilidad de Estado (ej. Danza Espada) si no está bloqueada por Cinta Elegida
       if (this.unlocks.stateSkill && !this.blocksStateMoves) {
         this.pendingStateSkill = true;
       }
@@ -228,7 +272,6 @@ export class HybridControls {
       return;
     }
 
-    // Actualizar coordenadas del cursor para puntería libre 3D sobre el mapa
     const rect = this.element?.getBoundingClientRect?.() ?? {
       left: 0,
       top: 0,
@@ -241,13 +284,11 @@ export class HybridControls {
     this.cursorNDC.x = ((e.clientX - rect.left) / width) * 2 - 1;
     this.cursorNDC.y = -((e.clientY - rect.top) / height) * 2 + 1;
 
-    this.updateAimFromCursorNDC();
+    if (this.useCursorAim) {
+      this.updateAimFromCursorNDC();
+    }
   }
 
-  /**
-   * Convierte la posición del cursor en pantalla en un vector unitario 3D (x, z)
-   * orientado respecto al ángulo actual de la cámara.
-   */
   updateAimFromCursorNDC() {
     const forward = forwardFromYaw(this.cameraYaw);
     const right = { x: -forward.z, z: forward.x };
@@ -263,43 +304,58 @@ export class HybridControls {
     return this.aimDirection;
   }
 
-  getMovementVector() {
-    let forward = 0;
-    let right = 0;
+  /**
+   * Devuelve el vector de movimiento (x, z) relativo al yaw de la cámara,
+   * usando la firma exacta de cameraRelativeMovement({ x: ix, z: iz }, yaw).
+   */
+  getMovementVector(yaw = this.cameraYaw) {
+    const ix =
+      (this.activeKeys.has('KeyD') || this.activeKeys.has('ArrowRight') ? 1 : 0) -
+      (this.activeKeys.has('KeyA') || this.activeKeys.has('ArrowLeft') ? 1 : 0);
+    const iz =
+      (this.activeKeys.has('KeyS') || this.activeKeys.has('ArrowDown') ? 1 : 0) -
+      (this.activeKeys.has('KeyW') || this.activeKeys.has('ArrowUp') ? 1 : 0);
 
-    if (this.activeKeys.has('KeyW') || this.activeKeys.has('ArrowUp')) forward += 1;
-    if (this.activeKeys.has('KeyS') || this.activeKeys.has('ArrowDown')) forward -= 1;
-    if (this.activeKeys.has('KeyD') || this.activeKeys.has('ArrowRight')) right += 1;
-    if (this.activeKeys.has('KeyA') || this.activeKeys.has('ArrowLeft')) right -= 1;
-
-    return cameraRelativeMovement(forward, right, this.cameraYaw);
+    return cameraRelativeMovement({ x: ix, z: iz }, yaw);
   }
 
   getForwardVector() {
-    return this.useCursorAim ? this.aimDirection : forwardFromYaw(this.cameraYaw);
+    return forwardFromYaw(this.cameraYaw);
   }
 
   getAimDirection() {
-    return { ...this.aimDirection };
+    if (this.useCursorAim && (typeof document === 'undefined' || document.pointerLockElement !== this.element)) {
+      return { ...this.aimDirection };
+    }
+    return forwardFromYaw(this.cameraYaw);
   }
 
-  /**
-   * Indica si el jugador está manteniendo Espacio en el aire para planear (Pasiva Tipo Volador).
-   */
-  isGlideHeld() {
+  isJumpHeld() {
     return this.activeKeys.has('Space');
   }
 
-  consumeJump() {
+  isGlideHeld() {
+    return this.isJumpHeld();
+  }
+
+  consumeJumpRequest() {
     const val = this.pendingJump;
     this.pendingJump = false;
     return val;
   }
 
-  consumeAttack() {
+  consumeJump() {
+    return this.consumeJumpRequest();
+  }
+
+  consumeSpecialRequest() {
     const val = this.pendingAttack;
     this.pendingAttack = false;
     return val;
+  }
+
+  consumeAttack() {
+    return this.consumeSpecialRequest();
   }
 
   consumeAimedShot() {
@@ -318,10 +374,14 @@ export class HybridControls {
     return val;
   }
 
-  consumeDash() {
+  consumeDashRequest() {
     const val = this.pendingDash;
     this.pendingDash = false;
     return val;
+  }
+
+  consumeDash() {
+    return this.consumeDashRequest();
   }
 
   consumeUpgradeSelection() {
@@ -332,13 +392,20 @@ export class HybridControls {
 
   updateCameraFromMouse(movementX, movementY) {
     const updated = applyMouseLook(
-      { yaw: this.cameraYaw, pitch: this.cameraPitch },
+      this.cameraYaw,
+      this.cameraPitch,
       movementX,
       movementY,
       this.mouseSensitivity
     );
     this.cameraYaw = updated.yaw;
     this.cameraPitch = updated.pitch;
+    this.aimDirection = forwardFromYaw(this.cameraYaw);
+    this.onCameraLook?.({ yaw: this.cameraYaw, pitch: this.cameraPitch });
+  }
+
+  clearKeys() {
+    this.resetInputState();
   }
 
   resetInputState() {
@@ -350,6 +417,10 @@ export class HybridControls {
     this.pendingJump = false;
     this.isPrimaryMouseDown = false;
     this.pendingUpgradeIndex = null;
+  }
+
+  dispose() {
+    this.detach();
   }
 
   destroy() {
