@@ -1,7 +1,6 @@
 import {
   BASE_PLAYER_STATS,
   HORDE_CONFIG,
-  PSYBEAM_BASE,
   RUN_UPGRADES,
   getBossProfile,
   getEliteAura,
@@ -9,17 +8,22 @@ import {
   getMiniBossProfile,
   getXpForNextLevel,
 } from '../data/combat.js';
+import { DAMAGE_SCALE, STAB_MULTIPLIER, getStarterMoveset } from '../data/moves.js';
+import { describeEffectiveness, getTypeMultiplier } from '../data/typeChart.js';
+import { DEFAULT_AIM, normalizeDirection, resolveAttackShape } from './attacks.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 /**
- * Simulación pura de una partida v0.3:
+ * Simulación pura de una partida v0.4:
  * - Hordas por oleadas con enemigos élite y jefe regional
  * - Minijefe a los 4 minutos como hito intermedio
- * - Psicorrayo automático con daño, enfriamiento, perforación y empuje
+ * - Ataque básico automático (según el inicial) y especial con Q, ambos con enfriamiento
+ * - Efectividad de tipos y STAB (×1,5 si el tipo del movimiento coincide con el del compañero)
+ * - Formas de ataque: haz (perforación), abanico (cono) y área alrededor del compañero
  * - Sistema de vida (PS), daño por contacto y ventana de gracia
  * - Orbes de experiencia con imán y recogida
- * - Subida de nivel con elección de 1 entre 3 mejoras (ahora incluye esquiva)
+ * - Subida de nivel con elección de 1 entre 3 mejoras
  * - Esquiva/dash (Shift) con invulnerabilidad y enfriamiento
  * - Retirada táctica que conserva una fracción de recompensas
  *
@@ -35,8 +39,12 @@ export class RunSession {
       enemies: Array.isArray(runConfig.enemies) && runConfig.enemies.length > 0
         ? [...runConfig.enemies]
         : ['Caterpie', 'Weedle'],
-      starter: runConfig.starter ?? { id: 'bulbasaur', name: 'Bulbasaur', types: ['Planta'], color: '#80d79c', accent: '#c5ee88' },
+      starter: runConfig.starter ?? { id: 'bulbasaur', name: 'Bulbasaur', types: ['Planta', 'Veneno'], color: '#80d79c', accent: '#c5ee88' },
       upgrades: { ...(runConfig.upgrades ?? {}) },
+    };
+    this.runConfig.starter = {
+      ...this.runConfig.starter,
+      types: [...(this.runConfig.starter.types ?? [])],
     };
 
     this.random = typeof options.random === 'function' ? options.random : Math.random;
@@ -51,11 +59,16 @@ export class RunSession {
       ? options.maxActiveEnemies
       : HORDE_CONFIG.maxActiveEnemies;
 
+    // Movimientos del compañero: básico (automático) y especial (Q)
+    this.moveset = getStarterMoveset(this.runConfig.starter.id);
+
     this.nextEntityId = 1;
     this.elapsedSeconds = 0;
     this.wave = 1;
     this.spawnTimer = 0.85;
-    this.psybeamCooldown = 0;
+    this.cooldowns = { basic: 0, special: 0 };
+    this.lastAttack = null;
+    this.attackSeq = 0;
 
     this.runUpgrades = {};
     this.stats = this.computeStats();
@@ -117,10 +130,10 @@ export class RunSession {
     const permPickupRank = Math.max(0, Number(permanent.pickupRange) || 0);
     const permXpRank = Math.max(0, Number(permanent.xpBonus) || 0);
 
-    const powerRank = inRun.psybeamPower ?? 0;
-    const cadenceRank = inRun.psybeamCadence ?? 0;
-    const prismRank = inRun.psybeamPrism ?? 0;
-    const waveRank = inRun.psybeamWave ?? 0;
+    const powerRank = inRun.attackPower ?? 0;
+    const cadenceRank = inRun.attackCadence ?? 0;
+    const prismRank = inRun.attackPrism ?? 0;
+    const waveRank = inRun.attackWave ?? 0;
     const vitalityRank = inRun.vitalityBoost ?? 0;
     const agileRank = inRun.agileStep ?? 0;
     const magnetRank = inRun.auraMagnet ?? 0;
@@ -138,9 +151,11 @@ export class RunSession {
     const pickupRadius = BASE_PLAYER_STATS.pickupRadius * (1 + magnetRank * 0.08);
     const xpMultiplier = (1 + permXpRank * 0.02) * (1 + magnetRank * 0.15);
 
-    const cooldownFactor = Math.max(0.28, (1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank));
+    const cadenceFactor = Math.max(0.28, (1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank));
     const dashCooldown = BASE_PLAYER_STATS.dashCooldownSeconds * Math.pow(0.8, dashRank);
     const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
+
+    const modifiers = { powerRank, prismRank, waveRank, cadenceFactor };
 
     return {
       maxHp,
@@ -154,18 +169,27 @@ export class RunSession {
         cooldown: dashCooldown,
         invulnerability: BASE_PLAYER_STATS.dashInvulnerabilitySeconds,
       },
-      psybeam: {
-        name: PSYBEAM_BASE.name,
-        damage: Math.round(PSYBEAM_BASE.damage * (1 + powerRank * 0.25)),
-        cooldown: Number((PSYBEAM_BASE.cooldown * cooldownFactor).toFixed(3)),
-        range: Number((PSYBEAM_BASE.range * (1 + prismRank * 0.12)).toFixed(2)),
-        width: Number((PSYBEAM_BASE.width * (1 + waveRank * 0.25)).toFixed(2)),
-        knockback: Number((PSYBEAM_BASE.knockback * (1 + waveRank * 0.35)).toFixed(2)),
-        beams: PSYBEAM_BASE.beams + prismRank,
-        pierce: PSYBEAM_BASE.pierce + powerRank,
-        spreadRadians: PSYBEAM_BASE.spreadRadians,
-        color: PSYBEAM_BASE.color,
+      moves: {
+        basic: this.#deriveAttack(this.moveset.basic, modifiers),
+        special: this.#deriveAttack(this.moveset.special, modifiers),
       },
+    };
+  }
+
+  #deriveAttack(move, { powerRank, prismRank, waveRank, cadenceFactor }) {
+    return {
+      id: move.id,
+      power: move.power * DAMAGE_SCALE * (1 + powerRank * 0.25),
+      cooldown: Number((move.cooldown * cadenceFactor).toFixed(3)),
+      range: Number(((move.range ?? 0) * (1 + prismRank * 0.12)).toFixed(2)),
+      width: Number(((move.width ?? 0.6) * (1 + waveRank * 0.25)).toFixed(2)),
+      knockback: Number(((move.knockback ?? 1) * (1 + waveRank * 0.35)).toFixed(2)),
+      pierce: (move.pierce ?? 1) + powerRank,
+      beams: (move.beams ?? 1) + prismRank,
+      spreadRadians: 0.18,
+      arc: Number(((move.arc ?? 0.9) * (1 + prismRank * 0.08)).toFixed(3)),
+      maxTargets: (move.maxTargets ?? 4) + powerRank,
+      radius: Number(((move.radius ?? 2.5) * (1 + prismRank * 0.1)).toFixed(2)),
     };
   }
 
@@ -227,6 +251,7 @@ export class RunSession {
     const enemy = {
       id: `enemy-${this.nextEntityId++}`,
       species: profile.name,
+      types: [...(overrides.types ?? profile.types ?? [])],
       isElite: false,
       isMiniBoss: false,
       isBoss: false,
@@ -276,6 +301,7 @@ export class RunSession {
     const miniBoss = {
       id: `miniboss-${this.nextEntityId++}`,
       species: profile.name,
+      types: [...(profile.types ?? [])],
       isElite: false,
       isMiniBoss: true,
       isBoss: false,
@@ -319,6 +345,7 @@ export class RunSession {
     const boss = {
       id: `boss-${this.nextEntityId++}`,
       species: profile.name,
+      types: [...(profile.types ?? [])],
       isElite: false,
       isMiniBoss: false,
       isBoss: true,
@@ -372,114 +399,96 @@ export class RunSession {
     return orb;
   }
 
-  firePsybeam(direction = { x: 0, z: -1 }, { force = false } = {}) {
+  /** Ataque básico (automático). Compatible con la API de v0.3 mediante `firePrimary`. */
+  firePrimary(direction = DEFAULT_AIM, options = {}) {
+    return this.fireAttack('basic', direction, options);
+  }
+
+  /** Especial con la tecla Q. Solo se lanza si su enfriamiento ha terminado. */
+  castSpecial(direction = DEFAULT_AIM) {
+    return this.fireAttack('special', direction);
+  }
+
+  /**
+   * Resuelve un ataque del compañero: qué alcanza, daño (STAB y efectividad), empuje,
+   * derrotas y orbes. Devuelve `fired: false` con `reason` si no puede lanzarse.
+   */
+  fireAttack(slot, direction = DEFAULT_AIM, { force = false } = {}) {
     if (this.status !== 'running' || !this.player.alive) {
-      return { fired: false, reason: 'not-running', beams: [], hits: [], defeated: [] };
+      return this.#emptyAttack(slot, 'not-running');
     }
-    if (!force && this.psybeamCooldown > 0) {
-      return { fired: false, reason: 'cooldown', beams: [], hits: [], defeated: [] };
-    }
-
-    let dirX = Number(direction?.x) || 0;
-    let dirZ = Number(direction?.z) || 0;
-    const len = Math.hypot(dirX, dirZ);
-    if (len > 0.0001) {
-      dirX /= len;
-      dirZ /= len;
-    } else {
-      dirX = 0;
-      dirZ = -1;
+    if (!force && this.cooldowns[slot] > 0) {
+      return this.#emptyAttack(slot, 'cooldown', this.cooldowns[slot]);
     }
 
-    this.player.rotationY = Math.atan2(dirX, dirZ);
-    this.psybeamCooldown = this.stats.psybeam.cooldown;
+    const move = this.moveset[slot];
+    const derived = this.stats.moves[slot];
+    const dir = normalizeDirection(direction);
 
-    const baseAngle = Math.atan2(dirZ, dirX);
-    const beamCount = this.stats.psybeam.beams;
-    const spread = this.stats.psybeam.spreadRadians;
-    const range = this.stats.psybeam.range;
-    const halfWidth = this.stats.psybeam.width * 0.5;
-    const baseDamage = this.stats.psybeam.damage;
-    const knockback = this.stats.psybeam.knockback;
-    const pierce = this.stats.psybeam.pierce;
+    this.player.rotationY = Math.atan2(dir.x, dir.z);
+    this.cooldowns[slot] = derived.cooldown;
 
-    const beams = [];
+    const attackerTypes = this.runConfig.starter.types;
+    const stab = attackerTypes.includes(move.type) ? STAB_MULTIPLIER : 1;
+    // Los enemigos inmunes al tipo del movimiento no participan (no bloquean haces ni cuentan para abanicos).
+    const attackable = this.enemies.filter(
+      (enemy) => enemy.hp > 0 && getTypeMultiplier(move.type, enemy.types) > 0,
+    );
+    const origin = { x: this.player.x, z: this.player.z };
+    const shape = resolveAttackShape({ move, derived, origin, direction: dir, enemies: attackable });
+
+    const beams = shape.beams.map((beam) => ({ ...beam, color: move.color, moveId: move.id }));
     const hits = [];
     const defeated = [];
-    const hitCountByEnemy = new Map();
 
-    for (let beamIndex = 0; beamIndex < beamCount; beamIndex += 1) {
-      const offsetIndex = beamIndex - (beamCount - 1) / 2;
-      const angle = baseAngle + offsetIndex * spread;
-      const rayX = Math.cos(angle);
-      const rayZ = Math.sin(angle);
-      const startX = this.player.x;
-      const startZ = this.player.z;
-      const endX = startX + rayX * range;
-      const endZ = startZ + rayZ * range;
+    for (const target of shape.targets) {
+      const { enemy } = target;
+      if (enemy.hp <= 0) continue;
 
-      const candidates = [];
-      for (const enemy of this.enemies) {
-        if (enemy.hp <= 0) continue;
-        const relX = enemy.x - startX;
-        const relZ = enemy.z - startZ;
-        const projection = relX * rayX + relZ * rayZ;
-        if (projection < -enemy.radius * 0.5 || projection > range + enemy.radius) continue;
+      const effectiveness = getTypeMultiplier(move.type, enemy.types);
+      // Impactos repetidos sobre el mismo enemigo (haces perforantes) hacen la mitad de daño.
+      const repeatFactor = target.repeatIndex === 0 ? 1 : 0.5;
+      const damage = Math.max(1, Math.round(derived.power * stab * effectiveness * repeatFactor));
 
-        const clampedProj = clamp(projection, 0, range);
-        const closestX = startX + rayX * clampedProj;
-        const closestZ = startZ + rayZ * clampedProj;
-        const distSq = (enemy.x - closestX) ** 2 + (enemy.z - closestZ) ** 2;
-        const hitRadius = enemy.radius + halfWidth;
+      enemy.hp = Math.max(0, enemy.hp - damage);
+      enemy.hitFlash = 0.18;
+      const kbFactor = enemy.isBoss ? 0.35 : (enemy.isMiniBoss ? 0.55 : 1);
+      const hitDir = target.direction
+        ?? normalizeDirection({ x: enemy.x - origin.x, z: enemy.z - origin.z });
+      enemy.knockbackX += hitDir.x * derived.knockback * kbFactor;
+      enemy.knockbackZ += hitDir.z * derived.knockback * kbFactor;
+      this.totalDamageDealt += damage;
 
-        if (distSq <= hitRadius * hitRadius) {
-          candidates.push({ enemy, distance: Math.max(0, projection) });
-        }
-      }
-
-      candidates.sort((a, b) => a.distance - b.distance);
-      const piercedTargets = candidates.slice(0, pierce);
-      const effectiveLength = piercedTargets.length >= pierce
-        ? clamp(piercedTargets[piercedTargets.length - 1].distance + 0.4, 1.5, range)
-        : range;
-
-      beams.push({
-        startX,
-        startZ,
-        endX: startX + rayX * effectiveLength,
-        endZ: startZ + rayZ * effectiveLength,
-        dirX: rayX,
-        dirZ: rayZ,
-        length: effectiveLength,
-        width: this.stats.psybeam.width,
+      hits.push({
+        enemyId: enemy.id,
+        species: enemy.species,
+        isElite: !!enemy.isElite,
+        isMiniBoss: !!enemy.isMiniBoss,
+        isBoss: !!enemy.isBoss,
+        x: enemy.x,
+        z: enemy.z,
+        damage,
+        remainingHp: enemy.hp,
+        defeated: enemy.hp <= 0,
+        moveId: move.id,
+        color: move.color,
+        effectiveness,
+        stab: stab > 1,
       });
+    }
 
-      for (const { enemy } of piercedTargets) {
-        if (enemy.hp <= 0) continue;
-        const priorHits = hitCountByEnemy.get(enemy.id) ?? 0;
-        const damage = priorHits === 0 ? baseDamage : Math.max(1, Math.round(baseDamage * 0.5));
-        hitCountByEnemy.set(enemy.id, priorHits + 1);
-
-        enemy.hp = Math.max(0, enemy.hp - damage);
-        enemy.hitFlash = 0.18;
-        const kbFactor = enemy.isBoss ? 0.35 : (enemy.isMiniBoss ? 0.55 : 1);
-        enemy.knockbackX += rayX * knockback * kbFactor;
-        enemy.knockbackZ += rayZ * knockback * kbFactor;
-        this.totalDamageDealt += damage;
-
-        hits.push({
-          enemyId: enemy.id,
-          species: enemy.species,
-          isElite: !!enemy.isElite,
-          isMiniBoss: !!enemy.isMiniBoss,
-          isBoss: !!enemy.isBoss,
-          x: enemy.x,
-          z: enemy.z,
-          damage,
-          remainingHp: enemy.hp,
-          defeated: enemy.hp <= 0,
-        });
-      }
+    if (hits.length > 0) {
+      this.attackSeq += 1;
+      this.lastAttack = {
+        seq: this.attackSeq,
+        slot,
+        moveId: move.id,
+        moveName: move.name,
+        effectiveness: hits[0].effectiveness,
+        stab: stab > 1,
+        damage: hits.reduce((sum, hit) => sum + hit.damage, 0),
+        hitCount: hits.length,
+      };
     }
 
     for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
@@ -529,9 +538,28 @@ export class RunSession {
 
     return {
       fired: true,
+      slot,
+      moveId: move.id,
+      moveName: move.name,
+      color: move.color,
+      shape: move.shape,
       beams,
       hits,
       defeated,
+      area: shape.area ? { ...shape.area, slot } : null,
+    };
+  }
+
+  #emptyAttack(slot, reason, remaining = 0) {
+    return {
+      fired: false,
+      slot,
+      reason,
+      remaining,
+      beams: [],
+      hits: [],
+      defeated: [],
+      area: null,
     };
   }
 
@@ -739,9 +767,11 @@ export class RunSession {
       beams: [],
       hits: [],
       defeated: [],
+      attacks: [],
       orbsPicked: [],
       playerDamaged: null,
       playerDashed: null,
+      specialRejected: null,
       leveledUp: false,
       miniBossSpawned: null,
       bossSpawned: null,
@@ -757,7 +787,8 @@ export class RunSession {
     }
 
     this.elapsedSeconds += dt;
-    this.psybeamCooldown = Math.max(0, this.psybeamCooldown - dt);
+    this.cooldowns.basic = Math.max(0, this.cooldowns.basic - dt);
+    this.cooldowns.special = Math.max(0, this.cooldowns.special - dt);
     this.player.invulnerableTimer = Math.max(0, this.player.invulnerableTimer - dt);
     this.player.hitFlash = Math.max(0, this.player.hitFlash - dt);
     this.player.dashFlash = Math.max(0, this.player.dashFlash - dt);
@@ -809,15 +840,23 @@ export class RunSession {
       }
     }
 
-    // Disparo automático del Psicorrayo cuando no está en enfriamiento
-    if (this.psybeamCooldown <= 0) {
-      const aim = input.aimDirection ?? { x: Math.sin(this.player.rotationY), z: Math.cos(this.player.rotationY) };
-      const fireResult = this.firePsybeam(aim, { force: true });
-      if (fireResult.fired) {
-        events.beams.push(...fireResult.beams);
-        events.hits.push(...fireResult.hits);
-        events.defeated.push(...fireResult.defeated);
+    const aim = input.aimDirection ?? { x: Math.sin(this.player.rotationY), z: Math.cos(this.player.rotationY) };
+
+    // Especial (Q): solo si su enfriamiento ha terminado
+    if (input.specialPressed) {
+      const special = this.castSpecial(aim);
+      if (special.fired) {
+        this.#recordAttack(events, special);
+      } else {
+        events.specialRejected = { reason: special.reason, remaining: special.remaining };
       }
+      if (this.isFinished) return events;
+    }
+
+    // Ataque básico automático cuando no está en enfriamiento
+    if (this.cooldowns.basic <= 0) {
+      const basic = this.fireAttack('basic', aim, { force: true });
+      if (basic.fired) this.#recordAttack(events, basic);
       if (this.isFinished) return events;
     }
 
@@ -858,6 +897,21 @@ export class RunSession {
     this.#updateOrbs(dt, events);
 
     return events;
+  }
+
+  #recordAttack(events, result) {
+    events.beams.push(...result.beams);
+    events.hits.push(...result.hits);
+    events.defeated.push(...result.defeated);
+    events.attacks.push({
+      slot: result.slot,
+      moveId: result.moveId,
+      moveName: result.moveName,
+      color: result.color,
+      shape: result.shape,
+      area: result.area,
+      hitCount: result.hits.length,
+    });
   }
 
   #updateEnemies(dt, events) {
@@ -968,6 +1022,27 @@ export class RunSession {
     }
   }
 
+  #attackSnapshot(slot) {
+    const move = this.moveset[slot];
+    const derived = this.stats.moves[slot];
+    const stab = this.runConfig.starter.types.includes(move.type);
+    return {
+      slot,
+      id: move.id,
+      name: move.name,
+      type: move.type,
+      shape: move.shape,
+      color: move.color,
+      description: move.description,
+      damage: Math.max(1, Math.round(derived.power * (stab ? STAB_MULTIPLIER : 1))),
+      stab,
+      range: derived.range,
+      cooldown: derived.cooldown,
+      cooldownRemaining: Number(this.cooldowns[slot].toFixed(2)),
+      ready: this.cooldowns[slot] <= 0,
+    };
+  }
+
   getHudSnapshot() {
     const activeUpgrades = RUN_UPGRADES
       .filter((upgrade) => (this.runUpgrades[upgrade.id] ?? 0) > 0)
@@ -981,6 +1056,7 @@ export class RunSession {
 
     const boss = this.activeBoss;
     const miniBoss = this.activeMiniBoss;
+    const last = this.lastAttack;
 
     return {
       elapsedSeconds: Math.floor(this.elapsedSeconds),
@@ -995,9 +1071,20 @@ export class RunSession {
       eliteKills: this.eliteKills,
       orbsCollected: this.orbsCollected,
       activeEnemies: this.enemies.length,
-      psybeamDamage: this.stats.psybeam.damage,
-      psybeamBeams: this.stats.psybeam.beams,
-      psybeamCooldown: this.stats.psybeam.cooldown,
+      basicAttack: this.#attackSnapshot('basic'),
+      specialAttack: this.#attackSnapshot('special'),
+      lastAttackSeq: this.attackSeq,
+      lastAttack: last
+        ? {
+            moveId: last.moveId,
+            moveName: last.moveName,
+            effectiveness: last.effectiveness,
+            label: describeEffectiveness(last.effectiveness),
+            stab: last.stab,
+            damage: last.damage,
+            hitCount: last.hitCount,
+          }
+        : null,
       dashCooldown: this.player.dashCooldown,
       dashReady: this.player.dashCooldown <= 0 && this.player.dashTimer <= 0,
       activeUpgrades,

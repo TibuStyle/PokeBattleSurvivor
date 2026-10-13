@@ -5,6 +5,7 @@ import { HORDE_CONFIG } from '../src/data/combat.js';
 
 /**
  * Pruebas de la v0.3: élites, minijefe, dash, retirada táctica y disparo automático.
+ * En v0.4 el disparo automático depende del movimiento básico del inicial (ver moves-v04).
  */
 
 function fixedRandom(sequence) {
@@ -53,7 +54,7 @@ describe('v0.3: élites con aura escalan y aparecen desde la oleada configurada'
   it('los élites asesinados incrementan el contador y dan más XP', () => {
     const session = createSession({ spawnInitialWave: false, random: fixedRandom([0.3]) });
     const elite = session.spawnEnemy({ isElite: true, hp: 1, species: 'Caterpie', x: 0, z: -5 });
-    const result = session.firePsybeam({ x: 0, z: -1 }, { force: true });
+    const result = session.firePrimary({ x: 0, z: -1 }, { force: true });
     assert.ok(result.defeated.some((d) => d.isElite), 'la derrota debe marcarse como élite');
     assert.equal(session.eliteKills, 1);
   });
@@ -86,7 +87,7 @@ describe('v0.3: el minijefe aparece al cumplirse el hito y entrega bonificación
     miniBoss.x = 0;
     miniBoss.z = -6;
     miniBoss.hp = 1;
-    session.firePsybeam({ x: 0, z: -1 }, { force: true });
+    session.firePrimary({ x: 0, z: -1 }, { force: true });
     assert.equal(session.miniBossDefeated, true);
     assert.ok(session.bonusCoins > 0, 'debe haber bonificación de monedas');
     assert.ok(session.bonusTickets >= 1, 'debe haber al menos un ticket de bonificación');
@@ -124,7 +125,7 @@ describe('v0.3: la retirada táctica marca la partida como extraída con recompe
   });
 });
 
-describe('v0.3: Psicorrayo se dispara automáticamente en cada tick cuando está listo', () => {
+describe('v0.3: el ataque básico se dispara automáticamente en cada tick cuando está listo', () => {
   it('fuego automático genera beams sin que el jugador haga input', () => {
     const session = createSession({ initialEnemies: 0, spawnInitialWave: false });
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -6, hp: 999 });

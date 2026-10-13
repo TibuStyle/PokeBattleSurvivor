@@ -1,5 +1,10 @@
 import { getUpgradeCost, PERMANENT_UPGRADES, RARITY_RATES } from '../data/economy.js';
 import { REGIONS, STARTERS } from '../data/regions.js';
+import { getStarterMoveset, STAB_MULTIPLIER, DAMAGE_SCALE } from '../data/moves.js';
+import { describeEffectiveness, getSuperEffectiveTargets, getTypeColor } from '../data/typeChart.js';
+
+const pad2 = (value) => String(value).padStart(2, '0');
+const SHAPE_LABELS = { beam: 'Haz', cone: 'Abanico', burst: 'Área' };
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
@@ -54,9 +59,10 @@ export class MenuController {
       eliteKills: 0,
       orbsCollected: 0,
       activeEnemies: 0,
-      psybeamDamage: 28,
-      psybeamBeams: 1,
-      psybeamCooldown: 0.42,
+      basicAttack: null,
+      specialAttack: null,
+      lastAttack: null,
+      lastAttackSeq: 0,
       dashReady: true,
       dashCooldown: 0,
       activeUpgrades: [],
@@ -112,7 +118,7 @@ export class MenuController {
         </header>
         <main class="hub-content">
           ${this.renderHubTab()}
-          <footer class="hub-footer"><span>PROTOTIPO 0.3</span><span>Partida local · progreso guardado en este navegador</span></footer>
+          <footer class="hub-footer"><span>PROTOTIPO 0.4</span><span>Partida local · progreso guardado en este navegador</span></footer>
         </main>
       </div>
     `;
@@ -141,7 +147,7 @@ export class MenuController {
         <div class="welcome-copy">
           <span class="eyebrow"><span class="status-dot"></span> PROTOCOLO DE CAMPO · REGIÓN ${String(suggestedRegion.generation).padStart(2, '0')}</span>
           <h1>Elige tu región.<br /><em>Sobrevive a la horda.</em></h1>
-          <p>Dispara Psicorrayo contra las oleadas regionales, recoge orbes de experiencia y elige una de tres mejoras al subir de nivel.</p>
+          <p>Tu compañero ataca con los movimientos de su tipo contra las oleadas regionales, recoge orbes de experiencia y elige una de tres mejoras al subir de nivel.</p>
           <div class="welcome-actions">
             <button class="button button--primary" data-action="open-region" data-region-id="${suggestedRegion.id}">
               ${chosenStarter ? 'Continuar expedición' : 'Elegir inicial'} <span aria-hidden="true">↗</span>
@@ -205,28 +211,148 @@ export class MenuController {
     const unlockedCount = this.flow.profile.unlockedPokemon.length;
     return `
       <section class="page-heading">
-        <span class="eyebrow">ARCHIVO DE CAMPO · ${String(unlockedCount).padStart(2, '0')} REGISTRADOS</span>
+        <span class="eyebrow">ARCHIVO DE CAMPO · ${pad2(unlockedCount)} / ${pad2(STARTERS.length)} REGISTRADOS</span>
         <h1>Pokédex</h1>
-        <p>Tu inicial gratuito queda registrado al entrar por primera vez a cada región. Los demás compañeros se incorporarán al gachapón regional.</p>
+        <p>Cada compañero ataca con dos movimientos: el <b>básico</b> se dispara solo y el <b>especial</b> se lanza con <kbd>Q</kbd> y tiene enfriamiento. El tipo decide la eficacia (×2 contra débiles, ×0,5 contra resistentes) y el STAB ×1,5 aplica cuando el movimiento coincide con tu tipo.</p>
       </section>
-      <div class="dex-grid">
-        ${STARTERS.map((starter, index) => {
-          const region = REGIONS.find((entry) => entry.id === starter.regionId);
-          const unlocked = this.flow.isPokemonUnlocked(starter.id);
-          const progress = this.flow.getRegionProgress(starter.regionId);
-          const isStarter = progress?.starterId === starter.id;
-          return `
-            <article class="dex-card ${unlocked ? 'is-unlocked' : 'is-unknown'}">
-              <div class="dex-card__art" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
-                <span class="dex-index">#${String(index + 1).padStart(3, '0')}</span>
-                <span class="creature-orb" aria-hidden="true"><i></i></span>
-                ${unlocked ? '' : '<span class="dex-lock">⌑</span>'}
-              </div>
-              <div class="dex-card__body"><span class="eyebrow">${escapeHtml(region.name)} · INICIAL</span><h3>${unlocked ? escapeHtml(starter.name) : 'Compañero sin registrar'}</h3><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><span class="dex-status">${isStarter ? '★ INICIAL ELEGIDO' : unlocked ? 'REGISTRADO' : 'POR DESBLOQUEAR'}</span></div>
-            </article>
-          `;
-        }).join('')}
+      ${REGIONS.map((region) => this.renderPokedexRegion(region)).join('')}
+    `;
+  }
+
+  renderPokedexRegion(region) {
+    const cards = region.starters.map((starter) => this.renderDexCard(starter, region)).join('');
+    return `
+      <section class="dex-region">
+        <div class="section-heading">
+          <div><span class="eyebrow">GEN ${pad2(region.generation)} · ${escapeHtml(region.name.toUpperCase())}</span><h2>${escapeHtml(region.name)}</h2></div>
+        </div>
+        <div class="dex-grid">${cards}</div>
+      </section>
+    `;
+  }
+
+  renderDexCard(starter, region) {
+    const unlocked = this.flow.isPokemonUnlocked(starter.id);
+    const progress = this.flow.getRegionProgress(starter.regionId);
+    const isStarter = progress?.starterId === starter.id;
+    const number = STARTERS.findIndex((entry) => entry.id === starter.id) + 1;
+    const moveset = getStarterMoveset(starter.id);
+    const coverage = this.offensiveCoverage([moveset.basic, moveset.special]);
+    const status = isStarter ? '★ INICIAL ELEGIDO' : unlocked ? 'REGISTRADO' : 'POR DESBLOQUEAR';
+
+    return `
+      <article class="dex-card ${unlocked ? 'is-unlocked' : 'is-unknown'}" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
+        <div class="dex-card__art">
+          <span class="dex-index">#${pad2(number).padStart(3, '0')}</span>
+          <span class="creature-orb" aria-hidden="true"><i></i></span>
+          ${unlocked ? '' : '<span class="dex-lock" aria-label="Sin registrar">⌑</span>'}
+        </div>
+        <div class="dex-card__body">
+          <span class="eyebrow">${escapeHtml(region.name)} · INICIAL</span>
+          <h3>${unlocked ? escapeHtml(starter.name) : 'Compañero sin registrar'}</h3>
+          <div class="type-row">${starter.types.map((type) => this.typeChip(type)).join('')}</div>
+          ${unlocked ? `
+            <div class="dex-moves">
+              ${this.renderDexMove(moveset.basic, 'Automático')}
+              ${this.renderDexMove(moveset.special, 'Q · Especial')}
+            </div>
+            ${coverage.length ? `<p class="dex-coverage"><span>Súper eficaz con sus movimientos</span> ${coverage.map((type) => this.typeChip(type)).join('')}</p>` : ''}
+          ` : '<p class="dex-locked-note">Movimientos sin registrar. Elige este inicial en su región para verlos.</p>'}
+          <span class="dex-status">${status}</span>
+        </div>
+      </article>
+    `;
+  }
+
+  renderDexMove(move, slotLabel) {
+    if (!move) return '';
+    const shape = SHAPE_LABELS[move.shape] ?? 'Haz';
+    return `
+      <div class="dex-move" style="--move-color:${move.color}">
+        <div class="dex-move__head">
+          <span class="dex-move__slot">${escapeHtml(slotLabel)}</span>
+          <b>${escapeHtml(move.name)}</b>
+          ${this.typeChip(move.type)}
+        </div>
+        <small>${shape} · potencia ${move.power} · enfriamiento ${move.cooldown.toFixed(1).replace('.', ',')} s</small>
+        <small class="dex-move__desc">${escapeHtml(move.description)}</small>
       </div>
+    `;
+  }
+
+  /** Tipos defensores que reciben ×2 de al menos uno de los movimientos (sin repetir). */
+  offensiveCoverage(moves) {
+    const types = new Set();
+    for (const move of moves) {
+      for (const type of getSuperEffectiveTargets(move.type)) types.add(type);
+    }
+    return [...types];
+  }
+
+  typeChip(type, extraClass = '') {
+    return `<span class="type-chip ${extraClass}" style="--type-color:${getTypeColor(type)}">${escapeHtml(type)}</span>`;
+  }
+
+  /** Estado del ataque para el HUD; si aún no hay datos de partida, usa la previsión del movimiento. */
+  attackPreview(move, slot) {
+    if (!move) return null;
+    const stab = this.flow.activeRun?.starter?.types?.includes(move.type) ?? false;
+    return {
+      slot,
+      id: move.id,
+      name: move.name,
+      type: move.type,
+      shape: move.shape,
+      color: move.color,
+      damage: Math.max(1, Math.round(move.power * DAMAGE_SCALE * (stab ? STAB_MULTIPLIER : 1))),
+      stab,
+      cooldown: move.cooldown,
+      cooldownRemaining: 0,
+      ready: true,
+    };
+  }
+
+  renderAttackPanel(hud = {}, run = null) {
+    const moveset = run ? getStarterMoveset(run.starter.id) : null;
+    const basic = hud.basicAttack ?? (moveset ? this.attackPreview(moveset.basic, 'basic') : null);
+    const special = hud.specialAttack ?? (moveset ? this.attackPreview(moveset.special, 'special') : null);
+    const last = hud.lastAttack;
+
+    return `
+      <div class="run-attack-panel" aria-label="Movimientos del compañero">
+        ${basic ? this.renderAttackRow(basic, 'AUTO') : ''}
+        ${special ? this.renderAttackRow(special, 'Q') : ''}
+        <div class="run-last-hit ${last ? '' : 'is-empty'}">${last ? this.renderLastHit(last) : 'Sin impactos todavía'}</div>
+      </div>
+    `;
+  }
+
+  renderAttackRow(move, keyLabel) {
+    const remaining = Math.max(0, Number(move.cooldownRemaining) || 0);
+    const ready = move.ready ?? remaining <= 0;
+    const cooldown = Math.max(0.0001, Number(move.cooldown) || 0.0001);
+    const fill = ready ? 100 : Math.max(0, Math.min(100, Math.round((1 - remaining / cooldown) * 100)));
+    const shape = SHAPE_LABELS[move.shape] ?? 'Haz';
+    return `
+      <div class="run-attack-row ${keyLabel === 'Q' ? 'run-attack-row--special' : 'run-attack-row--basic'} ${ready ? 'is-ready' : ''}" style="--move-color:${move.color}">
+        <span class="attack-key">${escapeHtml(keyLabel)}</span>
+        <div class="attack-copy">
+          <b>${escapeHtml(move.name)}</b>
+          <small>${this.typeChip(move.type, 'type-chip--mini')} ${shape} · ${move.damage} daño${move.stab ? ' · STAB' : ''}</small>
+          <div class="attack-cd-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${fill}"><i style="width:${fill}%"></i></div>
+        </div>
+        <span class="attack-cd-text">${ready ? 'LISTO' : `${remaining.toFixed(1).replace('.', ',')} s`}</span>
+      </div>
+    `;
+  }
+
+  renderLastHit(last) {
+    const tone = last.effectiveness === 0 ? 'none' : (last.effectiveness > 1 ? 'super' : (last.effectiveness < 1 ? 'weak' : 'normal'));
+    return `
+      Último golpe: <b>${escapeHtml(last.moveName)}</b>
+      <span class="eff eff--${tone}">${escapeHtml(describeEffectiveness(last.effectiveness))}${last.effectiveness > 0 && last.effectiveness !== 1 ? ` ×${String(last.effectiveness).replace('.', ',')}` : ''}</span>
+      ${last.stab ? '<span class="eff eff--stab">STAB</span>' : ''}
+      <small>${last.damage} daño${last.hitCount > 1 ? ` · ${last.hitCount} objetivos` : ''}</small>
     `;
   }
 
@@ -253,7 +379,7 @@ export class MenuController {
           `;
         }).join('')}
       </div>
-      <p class="implementation-note"><span>i</span> Las mejoras permanentes se aplican directamente a tu vida máxima, velocidad, cadencia de Psicorrayo, imán de orbes y experiencia ganada en cada partida.</p>
+      <p class="implementation-note"><span>i</span> Las mejoras permanentes se aplican directamente a tu vida máxima, velocidad, cadencia de ataques, imán de orbes y experiencia ganada en cada partida.</p>
     `;
   }
 
@@ -284,13 +410,23 @@ export class MenuController {
             <article class="starter-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
               <div class="starter-card__number">0${index + 1} <span>· ${starter.types.map(escapeHtml).join(' / ')}</span></div>
               <div class="starter-card__art"><div class="starter-orb" aria-hidden="true"><i></i></div><span class="starter-orbit starter-orbit--one"></span><span class="starter-orbit starter-orbit--two"></span></div>
-              <div class="starter-card__copy"><h2>${escapeHtml(starter.name)}</h2><p>${this.starterFlavour(starter)}</p></div>
+              <div class="starter-card__copy"><h2>${escapeHtml(starter.name)}</h2><p>${this.starterFlavour(starter)}</p>${this.renderStarterMoves(starter)}</div>
               <button class="button button--primary starter-pick" data-action="pick-starter" data-starter-id="${starter.id}">Elegir ${escapeHtml(starter.name)} <span aria-hidden="true">↗</span></button>
             </article>
           `).join('')}
         </section>
         <p class="focus-footnote">La selección se guarda automáticamente en este navegador. No necesitas una cuenta para probar el prototipo.</p>
       </main>
+    `;
+  }
+
+  renderStarterMoves(starter) {
+    const moveset = getStarterMoveset(starter.id);
+    return `
+      <ul class="starter-moves" aria-label="Movimientos de ${escapeHtml(starter.name)}">
+        <li><span>AUTO</span> ${escapeHtml(moveset.basic.name)} ${this.typeChip(moveset.basic.type, 'type-chip--mini')}</li>
+        <li><span>Q</span> ${escapeHtml(moveset.special.name)} ${this.typeChip(moveset.special.type, 'type-chip--mini')}</li>
+      </ul>
     `;
   }
 
@@ -319,12 +455,12 @@ export class MenuController {
       <main class="focus-screen region-ready-screen">
         <header class="focus-header"><button class="text-button" data-action="back-to-hub">← Volver al mapa</button><span class="focus-step">${escapeHtml(region.name.toUpperCase())} <i></i> EXPEDICIÓN</span></header>
         <section class="ready-layout">
-          <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, dispara Psicorrayo, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
+          <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, usa los movimientos de ${escapeHtml(starter.name)}, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
             <div class="ready-objectives"><div><small>ENEMIGOS DETECTADOS</small><b>${region.enemies.map(escapeHtml).join(' · ')}</b></div><div><small>JEFE DE REGIÓN</small><b class="boss-text">${escapeHtml(region.boss)}</b></div></div>
             <button class="button button--primary button--launch" data-action="enter-run">Entrar a la partida <span aria-hidden="true">↗</span></button>
-            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> ratón apuntar <span>·</span> clic Psicorrayo <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
+            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> ratón apuntar <span>·</span> <kbd>Q</kbd> especial <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
           </div>
-          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>HABILIDAD DE APUNTADO</span><b>Psicorrayo <small>· daño, empuje y perforación</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· 1 de 3 mejoras por nivel</small></b></div></aside>
+          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>ATAQUE AUTOMÁTICO</span><b>${escapeHtml(getStarterMoveset(starter.id).basic.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).basic.type)} · ${SHAPE_LABELS[getStarterMoveset(starter.id).basic.shape] ?? 'Haz'}</small></b></div><div class="partner-card__stat"><span>ESPECIAL · TECLA Q</span><b>${escapeHtml(getStarterMoveset(starter.id).special.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).special.type)} · enfriamiento ${getStarterMoveset(starter.id).special.cooldown.toFixed(1).replace('.', ',')} s</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· 1 de 3 mejoras por nivel</small></b></div></aside>
         </section>
       </main>
     `;
@@ -380,10 +516,7 @@ export class MenuController {
             </div>
           </div>
 
-          <div class="run-psybeam-row">
-            <span>◈ PSICORRAYO</span>
-            <b id="run-psybeam-stats">${hud.psybeamDamage} DAÑO · ${hud.psybeamBeams} ${hud.psybeamBeams === 1 ? 'HAZ' : 'HACES'}</b>
-          </div>
+          <div id="run-attack-slot">${this.renderAttackPanel(hud, run)}</div>
 
           <div class="run-skill-row ${hud.dashReady ? 'is-ready' : ''}">
             <span>➤ ESQUIVA (SHIFT)</span>
@@ -405,7 +538,7 @@ export class MenuController {
 
         <div class="run-hud__bottom">
           <span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}${hud.eliteKills ? ` · <b>${hud.eliteKills} ÉLITE</b>` : ''}</span>
-          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>SHIFT</kbd> esquivar <span>·</span> disparo auto <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
+          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>Q</kbd> especial <span>·</span> <kbd>SHIFT</kbd> esquivar <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
           <button class="run-pause-text" data-action="pause-run">PAUSA <span>Ⅱ</span></button>
         </div>
 
@@ -671,10 +804,9 @@ export class MenuController {
       xpFill.style.width = `${xpPct}%`;
     }
 
-    const psybeamStats = this.root.querySelector('#run-psybeam-stats');
-    if (psybeamStats) {
-      const beams = this.hudState.psybeamBeams ?? 1;
-      psybeamStats.textContent = `${this.hudState.psybeamDamage ?? 28} DAÑO · ${beams} ${beams === 1 ? 'HAZ' : 'HACES'}`;
+    const attackSlot = this.root.querySelector('#run-attack-slot');
+    if (attackSlot && this.flow.activeRun) {
+      attackSlot.innerHTML = this.renderAttackPanel(this.hudState, this.flow.activeRun);
     }
 
     const upgradesStrip = this.root.querySelector('#run-upgrades-strip');

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { cameraRelativeMovement } from './cameraRig.js';
 
 const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 const DASH_CODES = new Set(['ShiftLeft', 'ShiftRight']);
@@ -11,15 +12,19 @@ const UPGRADE_KEY_INDEX = {
   Numpad3: 2,
 };
 
-/** WASD + salto + esquiva (Shift) + puntería de ratón convertida de pantalla a suelo 3D. */
+/**
+ * WASD + salto + esquiva (Shift) + especial (Q) + puntería de ratón convertida de pantalla a suelo 3D.
+ * El movimiento puede ser relativo a la cámara de tercera persona (ver cameraRig.js).
+ */
 export class HybridControls {
-  constructor({ element, camera, player, onPrimaryFire, onJump, onDash, onPause, onSelectUpgrade }) {
+  constructor({ element, camera, player, onPrimaryFire, onJump, onDash, onSpecial = () => {}, onPause, onSelectUpgrade }) {
     this.element = element;
     this.camera = camera;
     this.player = player;
     this.onPrimaryFire = onPrimaryFire;
     this.onJump = onJump;
     this.onDash = onDash;
+    this.onSpecial = onSpecial;
     this.onPause = onPause;
     this.onSelectUpgrade = onSelectUpgrade;
 
@@ -33,7 +38,9 @@ export class HybridControls {
     this.aimDirection = new THREE.Vector3(0, 0, -1);
     this.jumpRequested = false;
     this.dashRequested = false;
+    this.specialRequested = false;
     this.primaryFireHeld = false;
+    this.pointerMoved = false;
 
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleKeyUp = this.handleKeyUp.bind(this);
@@ -91,6 +98,12 @@ export class HybridControls {
       }
     }
 
+    if (event.code === 'KeyQ' && !event.repeat) {
+      event.preventDefault();
+      this.specialRequested = true;
+      this.onSpecial?.();
+    }
+
     if (event.code === 'Escape' && !event.repeat) {
       event.preventDefault();
       this.onPause?.();
@@ -107,6 +120,14 @@ export class HybridControls {
 
   handlePointerMove(event) {
     this.setPointer(event);
+    this.pointerMoved = true;
+  }
+
+  /** Indica si el cursor se movió desde la última consulta (para seguir al apuntado con la cámara). */
+  consumePointerMoved() {
+    const moved = this.pointerMoved;
+    this.pointerMoved = false;
+    return moved;
   }
 
   handlePointerDown(event) {
@@ -148,11 +169,21 @@ export class HybridControls {
     else this.aimDirection.set(0, 0, -1);
   }
 
-  getMovementVector() {
+  /**
+   * Vector de movimiento en el plano. Con `cameraYaw` (radianes) el movimiento es relativo
+   * a la cámara de tercera persona; sin él, usa los ejes del mundo.
+   */
+  getMovementVector(cameraYaw = null) {
     const x = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight'))
       - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
     const z = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown'))
       - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
+
+    if (Number.isFinite(cameraYaw)) {
+      const relative = cameraRelativeMovement({ x, z }, cameraYaw);
+      this.movement.set(relative.x, 0, relative.z);
+      return this.movement;
+    }
 
     this.movement.set(x, 0, z);
     if (this.movement.lengthSq() > 1) this.movement.normalize();
@@ -179,6 +210,12 @@ export class HybridControls {
     return requested;
   }
 
+  consumeSpecialRequest() {
+    const requested = this.specialRequested;
+    this.specialRequested = false;
+    return requested;
+  }
+
   isDashHeld() {
     return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
   }
@@ -187,6 +224,7 @@ export class HybridControls {
     this.keys.clear();
     this.primaryFireHeld = false;
     this.dashRequested = false;
+    this.specialRequested = false;
   }
 
   dispose() {

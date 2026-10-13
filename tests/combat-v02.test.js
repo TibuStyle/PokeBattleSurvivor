@@ -39,7 +39,7 @@ test('v0.2: genera hordas regionales y las desplaza hacia el jugador', () => {
   assert.ok(nextDist < initialDist, 'los enemigos de la horda deben acercarse al jugador');
 });
 
-test('v0.2: Psicorrayo inflige daño, respeta enfriamiento y suelta orbes de XP al derrotar enemigos', () => {
+test('v0.2: el ataque básico inflige daño, respeta enfriamiento y suelta orbes de XP al derrotar enemigos', () => {
   const session = new RunSession(
     { regionId: 'kanto', enemies: ['Caterpie'] },
     { spawnInitialWave: false, random: createDeterministicRandom(20) },
@@ -48,23 +48,23 @@ test('v0.2: Psicorrayo inflige daño, respeta enfriamiento y suelta orbes de XP 
   const enemy = session.spawnEnemy({ species: 'Caterpie', x: 0, z: -5, hp: 50 });
   assert.equal(enemy.hp, 50);
 
-  // Primer disparo de Psicorrayo (daño base 28)
-  const firstShot = session.firePsybeam({ x: 0, z: -1 });
+  // Bulbasaur dispara Látigo Cepa (Planta): 45 × 0,5 de escala × 1,5 de STAB × 0,5 (Planta vs Bicho) = 17 de daño
+  const firstShot = session.firePrimary({ x: 0, z: -1 });
   assert.equal(firstShot.fired, true);
   assert.equal(firstShot.hits.length, 1);
-  assert.equal(enemy.hp, 22);
+  assert.equal(enemy.hp, 33);
   assert.equal(session.enemies.length, 1);
 
   // En enfriamiento no debe disparar sin forzar
-  const cooldownShot = session.firePsybeam({ x: 0, z: -1 });
+  const cooldownShot = session.firePrimary({ x: 0, z: -1 });
   assert.equal(cooldownShot.fired, false);
   assert.equal(cooldownShot.reason, 'cooldown');
 
-  // Con el disparo automático de v0.3, el Psicorrayo se vuelve a disparar tras el
+  // Con el disparo automático de v0.3, el ataque básico se vuelve a disparar tras el
   // enfriamiento. Bajamos la vida restante para asegurar la derrota con el próximo
   // haz y avanzamos el tiempo suficiente para que el orbe quede disponible.
   enemy.hp = 1;
-  session.psybeamCooldown = 0;
+  session.cooldowns.basic = 0;
   for (let i = 0; i < 20; i += 1) {
     session.update(0.08, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 } });
     if (session.kills > 0) break;
@@ -162,7 +162,7 @@ test('v0.2: derrotar al jefe regional completa la expedición con victoria y des
   assert.equal(boss.isBoss, true);
   assert.equal(boss.species, 'Mewtwo');
 
-  const shot = session.firePsybeam({ x: 0, z: -1 });
+  const shot = session.firePrimary({ x: 0, z: -1 });
   assert.equal(shot.fired, true);
   assert.equal(session.bossDefeated, true);
   assert.equal(session.status, 'victory');
