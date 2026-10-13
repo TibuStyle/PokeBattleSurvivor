@@ -51,13 +51,17 @@ export class MenuController {
       xp: 0,
       xpToNext: 40,
       kills: 0,
+      eliteKills: 0,
       orbsCollected: 0,
       activeEnemies: 0,
       psybeamDamage: 28,
       psybeamBeams: 1,
       psybeamCooldown: 0.42,
+      dashReady: true,
+      dashCooldown: 0,
       activeUpgrades: [],
       pendingChoices: null,
+      miniBoss: null,
       boss: null,
     };
   }
@@ -108,7 +112,7 @@ export class MenuController {
         </header>
         <main class="hub-content">
           ${this.renderHubTab()}
-          <footer class="hub-footer"><span>PROTOTIPO 0.2</span><span>Partida local · progreso guardado en este navegador</span></footer>
+          <footer class="hub-footer"><span>PROTOTIPO 0.3</span><span>Partida local · progreso guardado en este navegador</span></footer>
         </main>
       </div>
     `;
@@ -381,18 +385,27 @@ export class MenuController {
             <b id="run-psybeam-stats">${hud.psybeamDamage} DAÑO · ${hud.psybeamBeams} ${hud.psybeamBeams === 1 ? 'HAZ' : 'HACES'}</b>
           </div>
 
+          <div class="run-skill-row ${hud.dashReady ? 'is-ready' : ''}">
+            <span>➤ ESQUIVA (SHIFT)</span>
+            <b id="run-dash-text">${hud.dashReady ? 'LISTA' : `${hud.dashCooldown.toFixed(1)} s`}</b>
+          </div>
+
           <div id="run-upgrades-strip" class="run-upgrades-strip">
             ${this.renderActiveUpgradesStrip(hud.activeUpgrades)}
           </div>
         </aside>
+
+        <div id="run-mini-boss-banner" class="run-mini-boss-banner ${hud.miniBoss && !hud.boss ? 'is-visible' : ''}">
+          ${this.renderMiniBossBanner(hud.miniBoss)}
+        </div>
 
         <div id="run-boss-banner" class="run-boss-banner ${hud.boss ? 'is-visible' : ''}">
           ${this.renderBossBanner(hud.boss)}
         </div>
 
         <div class="run-hud__bottom">
-          <span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}</span>
-          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>CLIC</kbd> Psicorrayo <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
+          <span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}${hud.eliteKills ? ` · <b>${hud.eliteKills} ÉLITE</b>` : ''}</span>
+          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>SHIFT</kbd> esquivar <span>·</span> disparo auto <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
           <button class="run-pause-text" data-action="pause-run">PAUSA <span>Ⅱ</span></button>
         </div>
 
@@ -425,6 +438,20 @@ export class MenuController {
         <b>N${upgrade.rank}</b>
       </span>
     `).join('');
+  }
+
+  renderMiniBossBanner(miniBoss) {
+    if (!miniBoss) return '';
+    const pct = Math.max(0, Math.min(100, Math.round((miniBoss.hp / Math.max(1, miniBoss.maxHp)) * 100)));
+    return `
+      <div class="boss-banner__row boss-banner__row--mini">
+        <span>⌖ CENTINELA · <strong>${escapeHtml(miniBoss.name)}</strong></span>
+        <b>${miniBoss.hp} / ${miniBoss.maxHp} PS</b>
+      </div>
+      <div class="hud-bar hud-bar--miniboss">
+        <div class="hud-bar__fill" style="width:${pct}%"></div>
+      </div>
+    `;
   }
 
   renderBossBanner(boss) {
@@ -485,8 +512,8 @@ export class MenuController {
     return `
       <main class="focus-screen results-screen">
         <span class="eyebrow">INFORME DE EXPEDICIÓN · ${escapeHtml(region?.name ?? '')}</span>
-        <h1>${result.victory ? 'Región superada.' : 'Expedición terminada.'}</h1>
-        <p>Tiempo de campo: ${this.formatTime(result.elapsedSeconds)} · Bajas de horda: ${kills} · Nivel alcanzado: NV. ${String(level).padStart(2, '0')} (${orbs} orbes XP)</p>
+        <h1>${result.victory ? 'Región superada.' : (result.extracted ? 'Retirada exitosa.' : 'Expedición terminada.')}</h1>
+        <p>${result.victory ? 'Victoria' : (result.extracted ? 'Has extraído al compañero con el botín parcial' : 'La horda ha superado al compañero')} · Tiempo de campo: ${this.formatTime(result.elapsedSeconds)} · Bajas: ${kills}${result.eliteKills ? ` (${result.eliteKills} de élite)` : ''} · Nivel NV. ${String(level).padStart(2, '0')} · ${orbs} orbes XP${result.miniBossDefeated ? ' · Centinela abatido' : ''}</p>
         <div class="results-grid">
           <div class="results-stat"><small>MONEDAS GANADAS</small><b>+${result.rewards.coins} ◆</b></div>
           <div class="results-stat"><small>TICKETS DE RECLUTAMIENTO</small><b>+${result.rewards.tickets} ▤</b></div>
@@ -653,6 +680,22 @@ export class MenuController {
     const upgradesStrip = this.root.querySelector('#run-upgrades-strip');
     if (upgradesStrip) {
       upgradesStrip.innerHTML = this.renderActiveUpgradesStrip(this.hudState.activeUpgrades);
+    }
+
+    const dashText = this.root.querySelector('#run-dash-text');
+    const dashRow = this.root.querySelector('.run-skill-row');
+    if (dashText && dashRow) {
+      dashText.textContent = this.hudState.dashReady
+        ? 'LISTA'
+        : `${(this.hudState.dashCooldown ?? 0).toFixed(1)} s`;
+      dashRow.classList.toggle('is-ready', Boolean(this.hudState.dashReady));
+    }
+
+    const miniBossBanner = this.root.querySelector('#run-mini-boss-banner');
+    if (miniBossBanner) {
+      const showMini = Boolean(this.hudState.miniBoss) && !this.hudState.boss;
+      miniBossBanner.classList.toggle('is-visible', showMini);
+      miniBossBanner.innerHTML = this.renderMiniBossBanner(this.hudState.miniBoss);
     }
 
     const bossBanner = this.root.querySelector('#run-boss-banner');

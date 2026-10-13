@@ -6,9 +6,9 @@ const WORLD_LIMIT = 52;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 /**
- * Escena 3D Three.js para PokeBattle Survivor v0.2:
- * bosque procedural, compañero, hordas regionales, Psicorrayo con daño,
- * orbes de experiencia y retroalimentación visual de combate.
+ * Escena 3D Three.js para PokeBattle Survivor v0.3:
+ * bosque procedural, compañero, hordas regionales con élites, minijefe a los 4 min,
+ * Psicorrayo automático, orbes de experiencia, esquiva (Shift) y retirada táctica.
  */
 export class GameApp {
   constructor(
@@ -18,6 +18,7 @@ export class GameApp {
       onHudUpdate = () => {},
       onLevelUp = () => {},
       onRunEnd = () => {},
+      onExtractRequest = () => {},
     } = {},
   ) {
     this.container = container;
@@ -25,6 +26,7 @@ export class GameApp {
     this.onHudUpdate = onHudUpdate;
     this.onLevelUp = onLevelUp;
     this.onRunEnd = onRunEnd;
+    this.onExtractRequest = onExtractRequest;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
@@ -35,7 +37,7 @@ export class GameApp {
     this.renderer.domElement.className = 'game-canvas';
     this.renderer.domElement.setAttribute(
       'aria-label',
-      'Arena 3D: WASD mueve, el ratón apunta, clic dispara Psicorrayo y 1-3 elige mejoras',
+      'Arena 3D: WASD mueve, ratón apunta, Shift esquiva, Espacio salta, Esc pausa y 1-3 elige mejoras',
     );
     this.renderer.domElement.tabIndex = 0;
     this.container.appendChild(this.renderer.domElement);
@@ -44,6 +46,9 @@ export class GameApp {
     this.camera = null;
     this.player = null;
     this.playerBodyMaterial = null;
+    this.playerRing = null;
+    this.playerShadow = null;
+    this.targetMarker = null;
     this.controls = null;
     this.session = null;
     this.running = false;
@@ -56,6 +61,9 @@ export class GameApp {
     this.effects = [];
     this.enemyVisuals = new Map();
     this.orbVisuals = new Map();
+    this.bossMarker = null;
+    this.miniBossMarker = null;
+    this.dashTrail = null;
     this.clock = new THREE.Clock();
 
     this.handleResize = this.handleResize.bind(this);
@@ -88,8 +96,9 @@ export class GameApp {
       element: this.renderer.domElement,
       camera: this.camera,
       player: this.player,
-      onPrimaryFire: ({ direction }) => this.fireAimedMove(direction),
+      onPrimaryFire: () => {},
       onJump: () => {},
+      onDash: () => {},
       onPause: () => {
         if (this.session?.isPausedForChoice) return;
         this.setPaused(!this.paused);
@@ -238,22 +247,30 @@ export class GameApp {
     this.scene.add(this.targetMarker);
   }
 
-  fireAimedMove(direction) {
+  performDash() {
     if (!this.running || this.paused || !this.session || this.session.status !== 'running') return;
-
-    const result = this.session.firePsybeam(direction);
-    if (!result.fired) return;
-
-    this.spawnBeamEffects(result.beams);
-    this.spawnHitEffects(result.hits);
-    this.spawnDefeatEffects(result.defeated);
-    this.syncEnemies(0);
-    this.syncOrbs(0);
-    this.emitHudUpdate(true);
-
-    if (this.session.isFinished) {
-      this.finishRun();
+    const movement = this.controls?.getMovementVector();
+    let dirX = movement?.x ?? 0;
+    let dirZ = movement?.z ?? 0;
+    if (Math.hypot(dirX, dirZ) < 0.001 && this.controls) {
+      dirX = this.controls.aimDirection.x;
+      dirZ = this.controls.aimDirection.z;
     }
+    const result = this.session.dash({ x: dirX, z: dirZ });
+    if (result.ok) {
+      this.spawnDashEffect();
+      this.player.position.set(this.session.player.x, this.height, this.session.player.z);
+      this.emitHudUpdate(true);
+    }
+  }
+
+  /** Solicita retirada táctica desde el menú de pausa. */
+  requestExtract() {
+    if (!this.session || this.session.isFinished) return null;
+    this.session.extract();
+    this.setPaused(false);
+    this.finishRun();
+    return this.session.buildRunResult();
   }
 
   chooseUpgrade(selection) {
@@ -311,11 +328,15 @@ export class GameApp {
     const movement = this.controls.getMovementVector();
     const aimDirection = this.controls.aimDirection;
 
+    // Consumir el dash solicitado desde el teclado (Shift)
+    if (this.controls.consumeDashRequest()) {
+      this.performDash();
+    }
+
     const events = this.session.update(delta, {
       movement,
       aimDirection,
       height: this.height,
-      primaryFireHeld: this.controls.isPrimaryFireHeld(),
     });
 
     if (events.beams.length > 0) this.spawnBeamEffects(events.beams);
@@ -323,7 +344,15 @@ export class GameApp {
     if (events.defeated.length > 0) this.spawnDefeatEffects(events.defeated);
     if (events.orbsPicked.length > 0) this.spawnOrbPickupEffects(events.orbsPicked);
     if (events.playerDamaged) this.spawnPlayerHitEffect();
-    if (events.bossSpawned) this.spawnLevelUpEffect('#ff7be5');
+    if (events.playerDashed) this.spawnDashEffect();
+    if (events.miniBossSpawned) {
+      this.spawnLevelUpEffect('#ffd166');
+      this.spawnAnnouncement('#ffd166', '¡Centinela!');
+    }
+    if (events.bossSpawned) {
+      this.spawnLevelUpEffect('#ff7be5');
+      this.spawnAnnouncement('#ff7be5', '¡Jefe regional!');
+    }
 
     this.player.position.set(
       this.session.player.x,
@@ -336,9 +365,11 @@ export class GameApp {
       if (this.session.player.hitFlash > 0) {
         this.playerBodyMaterial.emissive.set('#ff5c77');
         this.playerBodyMaterial.emissiveIntensity = 0.85;
-      } else if (this.session.player.invulnerableTimer > 0) {
-        const blink = 0.22 + Math.abs(Math.sin(this.elapsed * 24)) * 0.45;
-        this.playerBodyMaterial.emissive.set(this.runConfig.starter.accent);
+      } else if (this.session.player.dashTimer > 0 || this.session.player.invulnerableTimer > 0) {
+        const blink = 0.3 + Math.abs(Math.sin(this.elapsed * 28)) * 0.55;
+        this.playerBodyMaterial.emissive.set(
+          this.session.player.dashTimer > 0 ? '#7be5ff' : this.runConfig.starter.accent,
+        );
         this.playerBodyMaterial.emissiveIntensity = blink;
       } else {
         this.playerBodyMaterial.emissive.set(this.runConfig.starter.color);
@@ -364,6 +395,7 @@ export class GameApp {
 
     this.syncEnemies(delta);
     this.syncOrbs(delta);
+    this.updateWorldMarkers();
     this.emitHudUpdate(false);
 
     if (events.leveledUp && this.session.status === 'level-up') {
@@ -375,6 +407,54 @@ export class GameApp {
     if (this.session.isFinished) {
       this.finishRun();
     }
+  }
+
+  updateWorldMarkers() {
+    if (!this.scene) return;
+    const miniBoss = this.session?.activeMiniBoss;
+    const boss = this.session?.activeBoss;
+
+    if (boss) {
+      if (!this.bossMarker) {
+        this.bossMarker = this.createRingMarker('#ff7be5', 1.6);
+        this.scene.add(this.bossMarker);
+      }
+      this.bossMarker.position.set(boss.x, 0.04, boss.z);
+      this.bossMarker.rotation.z += 0.02;
+      this.bossMarker.visible = true;
+    } else if (this.bossMarker) {
+      this.bossMarker.visible = false;
+    }
+
+    if (miniBoss) {
+      if (!this.miniBossMarker) {
+        this.miniBossMarker = this.createRingMarker('#ffd166', 1.3);
+        this.scene.add(this.miniBossMarker);
+      }
+      this.miniBossMarker.position.set(miniBoss.x, 0.03, miniBoss.z);
+      this.miniBossMarker.rotation.z -= 0.025;
+      this.miniBossMarker.visible = true;
+    } else if (this.miniBossMarker) {
+      this.miniBossMarker.visible = false;
+    }
+  }
+
+  createRingMarker(color, radius) {
+    const group = new THREE.Group();
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(radius * 0.85, radius, 40),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.78, side: THREE.DoubleSide }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    group.add(ring);
+    const runes = new THREE.Mesh(
+      new THREE.RingGeometry(radius * 0.6, radius * 0.72, 28),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, side: THREE.DoubleSide }),
+    );
+    runes.rotation.x = -Math.PI / 2;
+    runes.position.y = 0.005;
+    group.add(runes);
+    return group;
   }
 
   syncEnemies() {
@@ -405,8 +485,15 @@ export class GameApp {
         visual.bodyGroup.scale.setScalar(1.08);
       } else {
         visual.bodyMaterial.emissive.set(enemy.color);
-        visual.bodyMaterial.emissiveIntensity = enemy.isBoss ? 0.28 : 0.12;
+        visual.bodyMaterial.emissiveIntensity = enemy.isBoss || enemy.isMiniBoss ? 0.32 : (enemy.isElite ? 0.22 : 0.12);
         visual.bodyGroup.scale.setScalar(1);
+      }
+
+      if (visual.auraRing) {
+        visual.auraRing.rotation.z += 0.03;
+        const auraColor = enemy.aura?.color ?? (enemy.isBoss ? '#ff7be5' : '#ffd166');
+        visual.auraRing.material.color.set(auraColor);
+        visual.auraRing.visible = !!(enemy.isElite || enemy.isMiniBoss || enemy.isBoss);
       }
     }
 
@@ -428,7 +515,7 @@ export class GameApp {
       roughness: 0.42,
       metalness: 0.08,
       emissive: enemy.color,
-      emissiveIntensity: enemy.isBoss ? 0.28 : 0.12,
+      emissiveIntensity: enemy.isBoss ? 0.32 : 0.12,
     });
     const accentMaterial = new THREE.MeshStandardMaterial({
       color: enemy.accent,
@@ -437,23 +524,31 @@ export class GameApp {
       emissiveIntensity: 0.24,
     });
 
-    const scale = enemy.isBoss ? 1.55 : 1;
+    const baseScale = enemy.isBoss ? 1.6 : (enemy.isMiniBoss ? 1.3 : (enemy.isElite ? 1.15 : 1));
 
     if (enemy.shape === 'larva' || enemy.shape === 'stinger') {
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.36 * scale, 12, 10), bodyMaterial);
-      head.position.set(0, 0.42 * scale, 0.18 * scale);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.36 * baseScale, 12, 10), bodyMaterial);
+      head.position.set(0, 0.42 * baseScale, 0.18 * baseScale);
       bodyGroup.add(head);
 
-      const seg1 = new THREE.Mesh(new THREE.SphereGeometry(0.28 * scale, 10, 8), bodyMaterial);
-      seg1.position.set(0, 0.34 * scale, -0.18 * scale);
+      const seg1 = new THREE.Mesh(new THREE.SphereGeometry(0.28 * baseScale, 10, 8), bodyMaterial);
+      seg1.position.set(0, 0.34 * baseScale, -0.18 * baseScale);
       bodyGroup.add(seg1);
 
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.11 * scale, 0.32 * scale, 5), accentMaterial);
-      horn.position.set(0, 0.68 * scale, 0.34 * scale);
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.11 * baseScale, 0.32 * baseScale, 5), accentMaterial);
+      horn.position.set(0, 0.68 * baseScale, 0.34 * baseScale);
       horn.rotation.x = Math.PI / 4;
       bodyGroup.add(horn);
+    } else if (enemy.shape === 'miniboss') {
+      const core = new THREE.Mesh(new THREE.DodecahedronGeometry(0.62 * baseScale, 0), bodyMaterial);
+      core.position.y = 0.85 * baseScale;
+      bodyGroup.add(core);
+
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.9 * baseScale, 0.16 * baseScale, 0.7 * baseScale), accentMaterial);
+      plate.position.y = 0.4 * baseScale;
+      bodyGroup.add(plate);
     } else if (enemy.shape === 'boss') {
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.72 * scale, 1), bodyMaterial);
+      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.72 * baseScale, 1), bodyMaterial);
       core.position.y = 0.95;
       bodyGroup.add(core);
 
@@ -462,12 +557,12 @@ export class GameApp {
       crown.position.y = 0.95;
       bodyGroup.add(crown);
     } else {
-      const torso = new THREE.Mesh(new THREE.DodecahedronGeometry(0.44 * scale, 0), bodyMaterial);
-      torso.position.y = 0.48 * scale;
+      const torso = new THREE.Mesh(new THREE.DodecahedronGeometry(0.44 * baseScale, 0), bodyMaterial);
+      torso.position.y = 0.48 * baseScale;
       bodyGroup.add(torso);
 
-      const crest = new THREE.Mesh(new THREE.BoxGeometry(0.26 * scale, 0.18 * scale, 0.38 * scale), accentMaterial);
-      crest.position.set(0, 0.62 * scale, 0.22 * scale);
+      const crest = new THREE.Mesh(new THREE.BoxGeometry(0.26 * baseScale, 0.18 * baseScale, 0.38 * baseScale), accentMaterial);
+      crest.position.set(0, 0.62 * baseScale, 0.22 * baseScale);
       bodyGroup.add(crest);
     }
 
@@ -479,9 +574,20 @@ export class GameApp {
     shadow.position.y = 0.012;
     group.add(shadow);
 
-    const barWidth = enemy.isBoss ? 1.5 : 0.86;
+    // Aura para élites / jefes
+    const auraColor = enemy.aura?.color ?? (enemy.isBoss ? '#ff7be5' : (enemy.isMiniBoss ? '#ffd166' : '#7be5ff'));
+    const auraRing = new THREE.Mesh(
+      new THREE.RingGeometry(enemy.radius * 1.2, enemy.radius * 1.45, 24),
+      new THREE.MeshBasicMaterial({ color: auraColor, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    auraRing.rotation.x = -Math.PI / 2;
+    auraRing.position.y = 0.02;
+    auraRing.visible = !!(enemy.isElite || enemy.isMiniBoss || enemy.isBoss);
+    group.add(auraRing);
+
+    const barWidth = enemy.isBoss ? 1.6 : (enemy.isMiniBoss ? 1.3 : 0.86);
     const barHeight = enemy.isBoss ? 0.11 : 0.075;
-    const barY = enemy.isBoss ? 2.15 : 1.18;
+    const barY = enemy.isBoss ? 2.25 : (enemy.isMiniBoss ? 1.8 : 1.18);
 
     const hpBg = new THREE.Mesh(
       new THREE.PlaneGeometry(barWidth, barHeight),
@@ -503,6 +609,7 @@ export class GameApp {
       group,
       bodyGroup,
       bodyMaterial,
+      auraRing,
       hpFill,
       barWidth,
     };
@@ -585,7 +692,6 @@ export class GameApp {
         delta.clone().normalize(),
       );
 
-      // Núcleo psíquico brillante
       const coreMaterial = new THREE.MeshBasicMaterial({
         color: '#ffe6fa',
         transparent: true,
@@ -601,7 +707,6 @@ export class GameApp {
       this.scene.add(core);
       this.effects.push({ mesh: core, ttl: 0.16, remaining: 0.16 });
 
-      // Aura exterior de Psicorrayo
       const auraRadius = Math.max(0.12, beamData.width * 0.24);
       const auraMaterial = new THREE.MeshBasicMaterial({
         color: '#ff7be5',
@@ -643,10 +748,11 @@ export class GameApp {
   spawnDefeatEffects(defeated) {
     if (!this.scene) return;
     for (const enemy of defeated) {
+      const color = enemy.isBoss ? '#ff7be5' : (enemy.isMiniBoss ? '#ffd166' : (enemy.color || '#c7f27b'));
       const burst = new THREE.Mesh(
         new THREE.RingGeometry(0.25, 0.65, 24),
         new THREE.MeshBasicMaterial({
-          color: enemy.color || '#c7f27b',
+          color,
           transparent: true,
           opacity: 0.92,
           side: THREE.DoubleSide,
@@ -698,6 +804,27 @@ export class GameApp {
     this.effects.push({ mesh: wave, ttl: 0.25, remaining: 0.25, grow: 2.4 });
   }
 
+  spawnDashEffect() {
+    if (!this.scene || !this.player) return;
+    // Estela de esquiva
+    for (let i = 0; i < 4; i += 1) {
+      const trail = new THREE.Mesh(
+        new THREE.RingGeometry(0.35, 0.6, 24),
+        new THREE.MeshBasicMaterial({
+          color: '#7be5ff',
+          transparent: true,
+          opacity: 0.6 - i * 0.12,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      trail.rotation.x = -Math.PI / 2;
+      trail.position.set(this.player.position.x, 0.05 + i * 0.02, this.player.position.z);
+      this.scene.add(trail);
+      this.effects.push({ mesh: trail, ttl: 0.28 - i * 0.04, remaining: 0.28 - i * 0.04, grow: 1.8 });
+    }
+  }
+
   spawnLevelUpEffect(color = '#ffe07d') {
     if (!this.scene || !this.player) return;
     const halo = new THREE.Mesh(
@@ -714,6 +841,27 @@ export class GameApp {
     halo.position.set(this.player.position.x, 0.09, this.player.position.z);
     this.scene.add(halo);
     this.effects.push({ mesh: halo, ttl: 0.42, remaining: 0.42, grow: 3.1 });
+  }
+
+  spawnAnnouncement(color, text) {
+    // Efecto visual en el suelo (anillo expansivo grande) para anuncios como jefe/minijefe.
+    if (!this.scene || !this.player) return;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.8, 1.4, 40),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(this.player.position.x, 0.06, this.player.position.z);
+    this.scene.add(ring);
+    this.effects.push({ mesh: ring, ttl: 0.55, remaining: 0.55, grow: 4.5 });
+    // El texto se muestra vía HUD (onHudUpdate incluye status), el anillo es feedback visual.
+    void text;
   }
 
   updateEffects(delta) {
@@ -748,8 +896,12 @@ export class GameApp {
       snapshot.xp,
       snapshot.xpToNext,
       snapshot.kills,
+      snapshot.eliteKills,
       snapshot.orbsCollected,
       snapshot.activeEnemies,
+      snapshot.dashReady ? '1' : '0',
+      Math.round((snapshot.dashCooldown ?? 0) * 10) / 10,
+      snapshot.miniBoss?.hp ?? 0,
       snapshot.boss?.hp ?? 0,
       snapshot.activeUpgrades.map((u) => `${u.id}:${u.rank}`).join(','),
     ].join('|');
@@ -768,7 +920,8 @@ export class GameApp {
   }
 
   extractCurrentRun() {
-    if (!this.session) return null;
+    if (!this.session || this.session.isFinished) return null;
+    this.session.extract();
     const result = this.session.buildRunResult();
     this.stop();
     return result;
@@ -810,6 +963,14 @@ export class GameApp {
     this.controls = null;
     this.enemyVisuals.clear();
     this.orbVisuals.clear();
+    if (this.bossMarker) {
+      this.disposeObjectGroup(this.bossMarker);
+      this.bossMarker = null;
+    }
+    if (this.miniBossMarker) {
+      this.disposeObjectGroup(this.miniBossMarker);
+      this.miniBossMarker = null;
+    }
     this.disposeScene();
     this.container.classList.remove('is-active');
     this.container.setAttribute('aria-hidden', 'true');

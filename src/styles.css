@@ -447,6 +447,19 @@ kbd { display: inline-grid; min-width: 18px; height: 17px; place-items: center; 
   letter-spacing: .07em;
 }
 .run-psybeam-row b { color: #f7dffb; }
+.run-skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  color: #6e8d9b;
+  font: 8px var(--mono);
+  letter-spacing: .07em;
+  transition: color .18s;
+}
+.run-skill-row b { color: #7a949e; }
+.run-skill-row.is-ready { color: #9be4ff; }
+.run-skill-row.is-ready b { color: #d6f6ff; }
 .run-upgrades-strip { display: flex; flex-wrap: wrap; gap: 5px; }
 .upgrade-pill {
   display: inline-flex;
@@ -476,6 +489,24 @@ kbd { display: inline-grid; min-width: 18px; height: 17px; place-items: center; 
   transform: translateX(-50%);
   backdrop-filter: blur(12px);
 }
+.run-mini-boss-banner {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  display: none;
+  width: min(380px, calc(100vw - 40px));
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 209, 102, .32);
+  border-radius: 8px;
+  background: rgba(28, 22, 10, .78);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+.run-mini-boss-banner.is-visible { display: grid; gap: 5px; }
+.boss-banner__row--mini { color: #f2dcab !important; }
+.boss-banner__row--mini strong { color: #ffd166 !important; }
+.hud-bar--miniboss .hud-bar__fill { background: linear-gradient(90deg, #ffae34, #ffd166); }
+
 .run-boss-banner.is-visible { display: grid; gap: 6px; }
 .boss-banner__row { display: flex; align-items: center; justify-content: space-between; color: #f6d5f7; font: 8px var(--mono); letter-spacing: .09em; }
 .boss-banner__row strong { color: #ff8be6; }

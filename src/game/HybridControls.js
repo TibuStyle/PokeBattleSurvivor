@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
+const DASH_CODES = new Set(['ShiftLeft', 'ShiftRight']);
 const UPGRADE_KEY_INDEX = {
   Digit1: 0,
   Digit2: 1,
@@ -10,14 +11,15 @@ const UPGRADE_KEY_INDEX = {
   Numpad3: 2,
 };
 
-/** WASD + salto + puntería de ratón convertida de pantalla a suelo 3D. */
+/** WASD + salto + esquiva (Shift) + puntería de ratón convertida de pantalla a suelo 3D. */
 export class HybridControls {
-  constructor({ element, camera, player, onPrimaryFire, onJump, onPause, onSelectUpgrade }) {
+  constructor({ element, camera, player, onPrimaryFire, onJump, onDash, onPause, onSelectUpgrade }) {
     this.element = element;
     this.camera = camera;
     this.player = player;
     this.onPrimaryFire = onPrimaryFire;
     this.onJump = onJump;
+    this.onDash = onDash;
     this.onPause = onPause;
     this.onSelectUpgrade = onSelectUpgrade;
 
@@ -30,6 +32,7 @@ export class HybridControls {
     this.aimPoint = new THREE.Vector3(0, 0, -7);
     this.aimDirection = new THREE.Vector3(0, 0, -1);
     this.jumpRequested = false;
+    this.dashRequested = false;
     this.primaryFireHeld = false;
 
     this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -73,6 +76,18 @@ export class HybridControls {
       if (!event.repeat) {
         this.jumpRequested = true;
         this.onJump?.();
+      }
+    }
+
+    if (DASH_CODES.has(event.code)) {
+      this.keys.add(event.code);
+      event.preventDefault();
+      if (!event.repeat) {
+        this.dashRequested = true;
+        this.onDash?.({
+          movement: this.getMovementVector().clone(),
+          aimDirection: this.aimDirection.clone(),
+        });
       }
     }
 
@@ -158,9 +173,20 @@ export class HybridControls {
     return requested;
   }
 
+  consumeDashRequest() {
+    const requested = this.dashRequested;
+    this.dashRequested = false;
+    return requested;
+  }
+
+  isDashHeld() {
+    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+  }
+
   clearKeys() {
     this.keys.clear();
     this.primaryFireHeld = false;
+    this.dashRequested = false;
   }
 
   dispose() {
