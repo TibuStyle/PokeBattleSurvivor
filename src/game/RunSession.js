@@ -1,4 +1,4 @@
-import { TYPE_SYNERGIES, LEVEL_UP_SKILLS, calculateDarkTypeCritChance, getEquippedItemModifiers, getGachaMoveset } from '../data/gddSystems.js';
+import { TYPE_SYNERGIES, LEVEL_UP_SKILLS, CHEST_LOOT_TABLE, calculateDarkTypeCritChance, getEquippedItemModifiers, getGachaMoveset } from '../data/gddSystems.js';
 import {
   BASE_PLAYER_STATS,
   HORDE_CONFIG,
@@ -117,6 +117,10 @@ export class RunSession {
     this.frostSpawnTimer = 0;
     this.bossTelegraphs = [];
     this.bossPatternTimer = 2.8;
+    this.chests = [];
+    this.chestSpawnTimer = 6.0;
+    this.lastChestLoot = null;
+    this.rerollsRemaining = 2;
     this.miniBossSpawned = false;
     this.miniBossDefeated = false;
     this.bossSpawned = false;
@@ -128,6 +132,8 @@ export class RunSession {
         ? options.initialEnemies
         : HORDE_CONFIG.initialEnemies;
       this.spawnHordeWave(initialCount);
+      this.spawnChest({ distance: 9.5 });
+      this.spawnChest({ distance: 14.0 });
     }
   }
 
@@ -441,6 +447,43 @@ export class RunSession {
     };
     this.orbs.push(orb);
     return orb;
+  }
+
+  /**
+   * Genera un Cofre 3D en el mapa (estilo Megabonk) con objetos del mundo Pokémon.
+   */
+  spawnChest(overrides = {}) {
+    const angle = Number.isFinite(overrides.angle) ? overrides.angle : this.random() * Math.PI * 2;
+    const distance = Number.isFinite(overrides.distance) ? overrides.distance : 10 + this.random() * 14;
+    const x = Number.isFinite(overrides.x)
+      ? overrides.x
+      : clamp(this.player.x + Math.cos(angle) * distance, -this.worldLimit + 3, this.worldLimit - 3);
+    const z = Number.isFinite(overrides.z)
+      ? overrides.z
+      : clamp(this.player.z + Math.sin(angle) * distance, -this.worldLimit + 3, this.worldLimit - 3);
+
+    const lootTemplate = CHEST_LOOT_TABLE[Math.floor(this.random() * CHEST_LOOT_TABLE.length)] ?? CHEST_LOOT_TABLE[0];
+    const chest = {
+      id: `chest-${this.nextEntityId++}`,
+      x,
+      z,
+      radius: 0.78,
+      loot: { ...lootTemplate },
+    };
+    this.chests.push(chest);
+    return chest;
+  }
+
+  /**
+   * Permite cambiar las 3 cartas de subida de nivel (Reroll estilo PokéSurvivor).
+   */
+  rerollUpgradeChoices() {
+    if (this.status !== 'level-up' || this.rerollsRemaining <= 0) {
+      return { ok: false, reason: 'no-rerolls' };
+    }
+    this.rerollsRemaining -= 1;
+    this.pendingChoices = this.rollUpgradeChoices(3);
+    return { ok: true, rerollsRemaining: this.rerollsRemaining, pendingChoices: this.pendingChoices };
   }
 
   /** Ataque básico (automático). Compatible con la API de v0.3 mediante `firePrimary`. */
@@ -1118,6 +1161,7 @@ export class RunSession {
     if (this.isFinished) return events;
 
     this.#updateOrbs(dt, events);
+    this.#updateChests(dt, events);
 
     return events;
   }
@@ -1300,6 +1344,56 @@ export class RunSession {
     }
   }
 
+  #updateChests(dt, events) {
+    events.chestsOpened ??= [];
+    this.chestSpawnTimer -= dt;
+    if (this.chestSpawnTimer <= 0) {
+      this.chestSpawnTimer = 18.0;
+      if (this.chests.length < 5) {
+        this.spawnChest();
+      }
+    }
+
+    for (let i = this.chests.length - 1; i >= 0; i -= 1) {
+      const chest = this.chests[i];
+      const dist = Math.hypot(this.player.x - chest.x, this.player.z - chest.z);
+      if (dist <= this.player.radius + chest.radius) {
+        this.chests.splice(i, 1);
+        const { loot } = chest;
+        const coinMult = this.equippedItem?.coinBonusMultiplier ?? 1;
+        const earnedCoins = Math.round((loot.coins ?? 15) * coinMult);
+        this.bonusCoins += earnedCoins;
+
+        if (loot.kind === 'heal') {
+          const healAmount = Math.round(this.player.maxHp * (loot.healRatio ?? 0.45));
+          this.player.hp = Math.min(this.player.maxHp, this.player.hp + healAmount);
+        } else if (loot.kind === 'cleanse') {
+          this.cooldowns.basic = 0;
+          this.cooldowns.special = 0;
+          this.player.dashCooldown = 0;
+          this.player.invulnerableTimer = Math.max(this.player.invulnerableTimer, loot.invulnSec ?? 3.0);
+        } else if (loot.kind === 'xp') {
+          const xpRes = this.gainXp(loot.xpBonus ?? 60);
+          if (xpRes.levelsGained > 0) events.leveledUp = true;
+        }
+
+        this.lastChestLoot = {
+          id: loot.id,
+          name: loot.name,
+          icon: loot.icon,
+          description: loot.description,
+          coins: earnedCoins,
+        };
+        events.chestsOpened.push({
+          chestId: chest.id,
+          x: chest.x,
+          z: chest.z,
+          loot: this.lastChestLoot,
+        });
+      }
+    }
+  }
+
   #attackSnapshot(slot) {
     const move = this.moveset[slot];
     const derived = this.stats.moves[slot];
@@ -1368,6 +1462,13 @@ export class RunSession {
       dashUnlocked: this.unlockedSkills.dash,
       dashCooldown: this.player.dashCooldown,
       dashReady: this.unlockedSkills.dash && this.player.dashCooldown <= 0 && this.player.dashTimer <= 0,
+      stateBuffActive: this.stateBuffTimer > 0,
+      stateBuffRemaining: Number(this.stateBuffTimer.toFixed(1)),
+      stateCooldown: Number(this.cooldowns.state.toFixed(1)),
+      rerollsRemaining: this.rerollsRemaining,
+      coinsInRun: this.bonusCoins + this.kills * 2,
+      lastChestLoot: this.lastChestLoot,
+      equippedItem: this.equippedItem,
       activeUpgrades,
       pendingChoices: this.pendingChoices ? [...this.pendingChoices] : null,
       miniBoss: miniBoss
