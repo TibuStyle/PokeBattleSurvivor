@@ -131,3 +131,51 @@ test('RunSession aplica Restos (Lifesteal), Cinta Elegida (+Daño / Bloqueo Danz
   assert.equal(tornado.triggered, true);
   assert.equal(tornado.hits.length, 1);
 });
+
+test('Pasiva Tipo Eléctrico rebota ataques básicos hacia enemigos cercanos', () => {
+  const session = new RunSession(
+    {
+      regionId: 'kanto',
+      starter: { id: 'pikachu', name: 'Pikachu', types: ['Eléctrico'], color: '#f7d02c', accent: '#fff4a3' },
+    },
+    { spawnInitialWave: false }
+  );
+  session.spawnEnemy({ species: 'Caterpie', x: 0, z: -3, hp: 200 });
+  session.spawnEnemy({ species: 'Caterpie', x: 2.2, z: -3.2, hp: 200 });
+
+  const attack = session.firePrimary({ x: 0, z: -1 }, { force: true });
+  assert.equal(attack.fired, true);
+  assert.ok(attack.hits.length >= 2, 'El ataque eléctrico debe rebotar al segundo enemigo cercano');
+  assert.ok(attack.beams.some((b) => b.moveId === 'electric-chain'), 'Genera arco eléctrico de rebote');
+});
+
+test('Pasiva Tipo Hielo deja rastro de escarcha al moverse y ralentiza enemigos', () => {
+  const session = new RunSession(
+    {
+      regionId: 'kanto',
+      starter: { id: 'spheal', name: 'Spheal', types: ['Hielo', 'Agua'], color: '#8fdde7', accent: '#d8f8fc' },
+    },
+    { spawnInitialWave: false }
+  );
+  session.update(0.4, { movement: { x: 0, z: -1 }, aimDirection: { x: 0, z: -1 } });
+  assert.ok(session.frostNodes.length >= 1, 'Caminar con Tipo Hielo genera nodos de escarcha');
+});
+
+test('Jefe Regional genera patrones Bullet Hell 3D en el suelo esquivables saltando', () => {
+  const session = new RunSession(
+    {
+      regionId: 'kanto',
+      starter: { id: 'charmander', name: 'Charmander', types: ['Fuego'], color: '#f38b52', accent: '#ffd166' },
+    },
+    { spawnInitialWave: false }
+  );
+  session.spawnBoss({ name: 'Mewtwo', x: 0, z: -10, hp: 500 });
+  session.bossPatternTimer = 0.05;
+  session.update(0.1, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 } });
+  assert.equal(session.bossTelegraphs.length, 1, 'El jefe crea un área de peligro Bullet Hell en el suelo');
+
+  // Si el jugador salta por encima de 0.85m cuando detona, esquiva la onda expansiva
+  const hpBefore = session.player.hp;
+  session.update(1.4, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 }, height: 1.5 });
+  assert.equal(session.player.hp, hpBefore, 'Saltar o planear en 3D esquiva la onda del jefe en el suelo');
+});
