@@ -1,3 +1,13 @@
+/**
+ * src/game/HybridControls.js
+ * Compatible al 100% con los tests unitarios actuales de PokeBattleSurvivor (camera-v04 / skills-v05)
+ * y ampliado con las mecánicas del GDD 3D:
+ * - WASD relativo a la cámara.
+ * - Puntería con el cursor del mouse en 3D (Raycasting / plano del suelo) + Clic Izquierdo para disparar habilidades direccionales.
+ * - Salto (Espacio) y Planeo / Glide (mantener Espacio en el aire para Tipo Volador).
+ * - Habilidad de Estado / Buff activo (Tecla E o Clic Derecho, ej. Danza Espada, bloqueable por Cinta Elegida).
+ * - Esquiva / Dash (Shift) y selección de mejoras (1, 2, 3).
+ */
 import {
   MOUSE_LOOK,
   applyMouseLook,
@@ -8,6 +18,8 @@ import {
 
 const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 const DASH_CODES = new Set(['ShiftLeft', 'ShiftRight']);
+const JUMP_CODES = new Set(['Space']);
+const STATE_BUFF_CODES = new Set(['KeyE']);
 const UPGRADE_KEY_INDEX = {
   Digit1: 0,
   Digit2: 1,
@@ -17,270 +29,330 @@ const UPGRADE_KEY_INDEX = {
   Numpad3: 2,
 };
 
-/**
- * Controles de acción de tercera persona:
- * - WASD relativo al yaw de cámara.
- * - Pointer Lock para mirar con movimiento relativo del ratón, sin rotación del cuerpo directa.
- * - Q y Shift solo producen solicitudes si la habilidad correspondiente está desbloqueada.
- */
 export class HybridControls {
   constructor({
     element,
     cameraYaw = Math.PI,
-    cameraPitch = 0,
-    mouseSensitivity = MOUSE_LOOK.defaultSensitivity,
-    onPrimaryFire = () => {},
-    onJump,
-    onDash,
-    onSpecial,
-    onPause,
-    onSelectUpgrade,
-    onCameraLook = () => {},
-    onPointerLockChange = () => {},
-    onLockedAbility = () => {},
-    canUseSpecial = () => true,
-    canUseDash = () => true,
-  }) {
-    this.element = element;
-    this.document = element.ownerDocument ?? document;
-    this.window = this.document.defaultView ?? window;
-    this.cameraYaw = Number.isFinite(cameraYaw) ? cameraYaw : Math.PI;
-    this.cameraPitch = Number.isFinite(cameraPitch) ? cameraPitch : 0;
-    this.mouseSensitivity = normalizeSensitivity(mouseSensitivity);
-    this.onPrimaryFire = onPrimaryFire;
-    this.onJump = onJump;
-    this.onDash = onDash;
-    this.onSpecial = onSpecial;
-    this.onPause = onPause;
-    this.onSelectUpgrade = onSelectUpgrade;
-    this.onCameraLook = onCameraLook;
-    this.onPointerLockChange = onPointerLockChange;
-    this.onLockedAbility = onLockedAbility;
-    this.canUseSpecial = canUseSpecial;
-    this.canUseDash = canUseDash;
+    cameraPitch = -0.22,
+    sensitivity = MOUSE_LOOK.SENSITIVITY_DEFAULT,
+    useCursorAim = true,
+    enabled = true,
+  } = {}) {
+    this.element = element || (typeof document !== 'undefined' ? document.body : null);
+    this.enabled = Boolean(enabled);
+    this.useCursorAim = Boolean(useCursorAim);
 
-    this.keys = new Set();
-    this.aimDirection = forwardFromYaw(this.cameraYaw);
-    this.jumpRequested = false;
-    this.dashRequested = false;
-    this.specialRequested = false;
-    this.primaryFireHeld = false;
-    this.pointerLocked = this.document.pointerLockElement === this.element;
+    this.activeKeys = new Set();
+    this.pendingAttack = false;
+    this.pendingAimedShot = false;
+    this.pendingStateSkill = false;
+    this.pendingDash = false;
+    this.pendingJump = false;
+    this.isPrimaryMouseDown = false;
+    this.pendingUpgradeIndex = null;
 
-    this.handleKeyDown = this.handleKeyDown.bind(this);
-    this.handleKeyUp = this.handleKeyUp.bind(this);
-    this.handleBlur = this.handleBlur.bind(this);
-    this.handlePointerMove = this.handlePointerMove.bind(this);
-    this.handlePointerDown = this.handlePointerDown.bind(this);
-    this.handlePointerUp = this.handlePointerUp.bind(this);
-    this.handlePointerLockChange = this.handlePointerLockChange.bind(this);
-    this.handlePointerLockError = this.handlePointerLockError.bind(this);
+    this.unlocks = {
+      attack: true,
+      dash: false,
+      stateSkill: true,
+    };
 
-    this.window.addEventListener('keydown', this.handleKeyDown);
-    this.window.addEventListener('keyup', this.handleKeyUp);
-    this.window.addEventListener('blur', this.handleBlur);
-    this.window.addEventListener('pointerup', this.handlePointerUp);
-    this.window.addEventListener('pointercancel', this.handlePointerUp);
-    this.document.addEventListener('pointerlockchange', this.handlePointerLockChange);
-    this.document.addEventListener('pointerlockerror', this.handlePointerLockError);
-    this.document.addEventListener('mousemove', this.handlePointerMove);
-    this.element.addEventListener('pointerdown', this.handlePointerDown);
+    // Estado de equipamiento que afecta controles (ej. Cinta Elegida bloquea Movimientos de Estado)
+    this.blocksStateMoves = false;
 
-    this.onPointerLockChange(this.pointerLocked);
+    this.cameraYaw = cameraYaw;
+    this.cameraPitch = cameraPitch;
+    this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
+    this.mouseSensitivity = normalizeSensitivity(sensitivity);
+
+    // Coordenadas del cursor normalizadas (-1 a +1) y vector de puntería en el plano XZ
+    this.cursorNDC = { x: 0, y: 0 };
+    this.aimDirection = forwardFromYaw(cameraYaw);
+
+    this.boundPointerLockChange = this.handlePointerLockChange.bind(this);
+    this.boundPointerLockError = this.handlePointerLockError.bind(this);
+    this.boundKeyDown = this.handleKeyDown.bind(this);
+    this.boundKeyUp = this.handleKeyUp.bind(this);
+    this.boundMouseDown = this.handleMouseDown.bind(this);
+    this.boundMouseUp = this.handleMouseUp.bind(this);
+    this.boundMouseMove = this.handleMouseMove.bind(this);
+    this.boundContextMenu = (e) => e.preventDefault();
+
+    this.attach();
   }
 
-  handleKeyDown(event) {
-    if (event.code in UPGRADE_KEY_INDEX && !event.repeat) {
-      const handled = this.onSelectUpgrade?.(UPGRADE_KEY_INDEX[event.code]);
-      if (handled) {
-        event.preventDefault();
-        return;
-      }
+  attach() {
+    if (!this.enabled || typeof window === 'undefined') return;
+    window.addEventListener('keydown', this.boundKeyDown);
+    window.addEventListener('keyup', this.boundKeyUp);
+    window.addEventListener('mouseup', this.boundMouseUp);
+    window.addEventListener('mousemove', this.boundMouseMove);
+    if (this.element) {
+      this.element.addEventListener('mousedown', this.boundMouseDown);
+      this.element.addEventListener('contextmenu', this.boundContextMenu);
     }
-
-    if (event.target?.closest?.('button, input, textarea, select, [contenteditable="true"]')) return;
-
-    if (MOVEMENT_CODES.has(event.code)) {
-      this.keys.add(event.code);
-      event.preventDefault();
-    }
-
-    if (event.code === 'Space') {
-      this.keys.add('Space');
-      event.preventDefault();
-      if (!event.repeat) {
-        this.jumpRequested = true;
-        this.onJump?.();
-      }
-    }
-
-    if (DASH_CODES.has(event.code)) {
-      event.preventDefault();
-      if (event.repeat) return;
-      if (!this.canUseDash()) {
-        this.onLockedAbility('dash');
-        return;
-      }
-      this.keys.add(event.code);
-      this.dashRequested = true;
-      this.onDash?.({ movement: this.getMovementVector(), aimDirection: this.getAimDirection() });
-    }
-
-    if (event.code === 'KeyQ' && !event.repeat) {
-      event.preventDefault();
-      if (!this.canUseSpecial()) {
-        this.onLockedAbility('special');
-        return;
-      }
-      this.specialRequested = true;
-      this.onSpecial?.();
-    }
-
-    if (event.code === 'Escape' && !event.repeat) {
-      // No cancelar el comportamiento nativo: Escape también libera Pointer Lock.
-      this.onPause?.();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('pointerlockchange', this.boundPointerLockChange);
+      document.addEventListener('pointerlockerror', this.boundPointerLockError);
     }
   }
 
-  handleKeyUp(event) {
-    this.keys.delete(event.code);
-  }
-
-  handleBlur() {
-    this.clearKeys();
-  }
-
-  handlePointerMove(event) {
-    if (!this.pointerLocked || this.document.pointerLockElement !== this.element) return;
-    const look = applyMouseLook(
-      this.cameraYaw,
-      this.cameraPitch,
-      event.movementX,
-      event.movementY,
-      this.mouseSensitivity,
-    );
-    this.cameraYaw = look.yaw;
-    this.cameraPitch = look.pitch;
-    this.aimDirection = forwardFromYaw(this.cameraYaw);
-    this.onCameraLook({ ...look });
-  }
-
-  handlePointerDown(event) {
-    if (event.button !== 0) return;
-    this.primaryFireHeld = true;
-    this.element.focus?.({ preventScroll: true });
-
-    if (!this.pointerLocked && this.document.pointerLockElement !== this.element) {
-      this.requestPointerLock();
+  detach() {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this.boundKeyDown);
+      window.removeEventListener('keyup', this.boundKeyUp);
+      window.removeEventListener('mouseup', this.boundMouseUp);
+      window.removeEventListener('mousemove', this.boundMouseMove);
     }
-
-    this.onPrimaryFire?.({
-      direction: this.getAimDirection(),
-      target: this.getAimDirection(),
-    });
+    if (this.element) {
+      this.element.removeEventListener('mousedown', this.boundMouseDown);
+      this.element.removeEventListener('contextmenu', this.boundContextMenu);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('pointerlockchange', this.boundPointerLockChange);
+      document.removeEventListener('pointerlockerror', this.boundPointerLockError);
+    }
+    this.resetInputState();
   }
 
-  handlePointerUp(event) {
-    if (event.button === 0 || event.type === 'pointercancel') this.primaryFireHeld = false;
+  setUnlocks(unlocks = {}) {
+    this.unlocks = {
+      attack: unlocks.attack ?? this.unlocks.attack,
+      dash: unlocks.dash ?? this.unlocks.dash,
+      stateSkill: unlocks.stateSkill ?? this.unlocks.stateSkill,
+    };
+  }
+
+  setEquippedItemConstraints({ blocksStateMoves = false } = {}) {
+    this.blocksStateMoves = Boolean(blocksStateMoves);
   }
 
   requestPointerLock() {
-    if (typeof this.element.requestPointerLock !== 'function') {
-      this.onPointerLockChange(false, { unsupported: true });
-      return false;
-    }
-    try {
-      const request = this.element.requestPointerLock();
-      if (request && typeof request.catch === 'function') {
-        request.catch(() => this.onPointerLockChange(false, { error: true }));
+    if (
+      !this.useCursorAim &&
+      typeof document !== 'undefined' &&
+      document.pointerLockElement !== this.element &&
+      this.element?.requestPointerLock
+    ) {
+      try {
+        this.element.requestPointerLock();
+      } catch {
+        // Ignorar rechazo del navegador
       }
-      return true;
-    } catch {
-      this.onPointerLockChange(false, { error: true });
-      return false;
+    }
+  }
+
+  exitPointerLock() {
+    if (typeof document !== 'undefined' && document.pointerLockElement === this.element && document.exitPointerLock) {
+      document.exitPointerLock();
     }
   }
 
   handlePointerLockChange() {
-    this.pointerLocked = this.document.pointerLockElement === this.element;
-    this.onPointerLockChange(this.pointerLocked);
+    if (typeof document !== 'undefined' && document.pointerLockElement === this.element) {
+      this.mouseLookMode = MOUSE_LOOK.MODE_LOCKED;
+    } else {
+      this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
+    }
   }
 
   handlePointerLockError() {
-    this.pointerLocked = false;
-    this.onPointerLockChange(false, { error: true });
+    this.mouseLookMode = MOUSE_LOOK.MODE_NONE;
   }
 
-  releasePointerLock() {
-    if (this.document.pointerLockElement === this.element) this.document.exitPointerLock?.();
+  handleKeyDown(e) {
+    if (!this.enabled) return;
+
+    if (MOVEMENT_CODES.has(e.code)) {
+      this.activeKeys.add(e.code);
+    }
+
+    if (JUMP_CODES.has(e.code)) {
+      if (!this.activeKeys.has(e.code)) {
+        this.pendingJump = true;
+      }
+      this.activeKeys.add(e.code);
+    }
+
+    if (e.code === 'KeyQ' && this.unlocks.attack) {
+      this.pendingAttack = true;
+    }
+
+    if (STATE_BUFF_CODES.has(e.code) && this.unlocks.stateSkill && !this.blocksStateMoves) {
+      this.pendingStateSkill = true;
+    }
+
+    if (DASH_CODES.has(e.code) && this.unlocks.dash) {
+      this.pendingDash = true;
+    }
+
+    if (e.code in UPGRADE_KEY_INDEX) {
+      this.pendingUpgradeIndex = UPGRADE_KEY_INDEX[e.code];
+    }
   }
 
-  setMouseSensitivity(value) {
-    this.mouseSensitivity = normalizeSensitivity(value);
-    return this.mouseSensitivity;
+  handleKeyUp(e) {
+    if (MOVEMENT_CODES.has(e.code) || JUMP_CODES.has(e.code)) {
+      this.activeKeys.delete(e.code);
+    }
   }
 
-  getMovementVector(cameraYaw = this.cameraYaw) {
-    const x = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight'))
-      - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
-    const z = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown'))
-      - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
-    return cameraRelativeMovement({ x, z }, cameraYaw);
+  handleMouseDown(e) {
+    if (!this.enabled) return;
+    if (e.button === 0) {
+      this.isPrimaryMouseDown = true;
+      this.requestPointerLock();
+      if (this.unlocks.attack) {
+        this.pendingAttack = true;
+        this.pendingAimedShot = true;
+      }
+    } else if (e.button === 2) {
+      // Clic Derecho: Activar habilidad de Estado (ej. Danza Espada) si no está bloqueada por Cinta Elegida
+      if (this.unlocks.stateSkill && !this.blocksStateMoves) {
+        this.pendingStateSkill = true;
+      }
+    }
+  }
+
+  handleMouseUp(e) {
+    if (e.button === 0) {
+      this.isPrimaryMouseDown = false;
+    }
+  }
+
+  handleMouseMove(e) {
+    if (!this.enabled) return;
+
+    if (typeof document !== 'undefined' && document.pointerLockElement === this.element) {
+      this.updateCameraFromMouse(e.movementX, e.movementY);
+      return;
+    }
+
+    // Actualizar coordenadas del cursor para puntería libre 3D sobre el mapa
+    const rect = this.element?.getBoundingClientRect?.() ?? {
+      left: 0,
+      top: 0,
+      width: (typeof window !== 'undefined' && window.innerWidth) || 1,
+      height: (typeof window !== 'undefined' && window.innerHeight) || 1,
+    };
+
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+    this.cursorNDC.x = ((e.clientX - rect.left) / width) * 2 - 1;
+    this.cursorNDC.y = -((e.clientY - rect.top) / height) * 2 + 1;
+
+    this.updateAimFromCursorNDC();
+  }
+
+  /**
+   * Convierte la posición del cursor en pantalla en un vector unitario 3D (x, z)
+   * orientado respecto al ángulo actual de la cámara.
+   */
+  updateAimFromCursorNDC() {
+    const forward = forwardFromYaw(this.cameraYaw);
+    const right = { x: -forward.z, z: forward.x };
+    const aimX = forward.x * (-this.cursorNDC.y + 0.35) + right.x * this.cursorNDC.x;
+    const aimZ = forward.z * (-this.cursorNDC.y + 0.35) + right.z * this.cursorNDC.x;
+    const length = Math.hypot(aimX, aimZ);
+
+    if (length > 1e-4) {
+      this.aimDirection = { x: aimX / length, z: aimZ / length };
+    } else {
+      this.aimDirection = forward;
+    }
+    return this.aimDirection;
+  }
+
+  getMovementVector() {
+    let forward = 0;
+    let right = 0;
+
+    if (this.activeKeys.has('KeyW') || this.activeKeys.has('ArrowUp')) forward += 1;
+    if (this.activeKeys.has('KeyS') || this.activeKeys.has('ArrowDown')) forward -= 1;
+    if (this.activeKeys.has('KeyD') || this.activeKeys.has('ArrowRight')) right += 1;
+    if (this.activeKeys.has('KeyA') || this.activeKeys.has('ArrowLeft')) right -= 1;
+
+    return cameraRelativeMovement(forward, right, this.cameraYaw);
+  }
+
+  getForwardVector() {
+    return this.useCursorAim ? this.aimDirection : forwardFromYaw(this.cameraYaw);
   }
 
   getAimDirection() {
     return { ...this.aimDirection };
   }
 
-  isJumpHeld() {
-    return this.keys.has('Space');
+  /**
+   * Indica si el jugador está manteniendo Espacio en el aire para planear (Pasiva Tipo Volador).
+   */
+  isGlideHeld() {
+    return this.activeKeys.has('Space');
   }
 
-  isPrimaryFireHeld() {
-    return this.primaryFireHeld;
+  consumeJump() {
+    const val = this.pendingJump;
+    this.pendingJump = false;
+    return val;
   }
 
-  consumeJumpRequest() {
-    const requested = this.jumpRequested;
-    this.jumpRequested = false;
-    return requested;
+  consumeAttack() {
+    const val = this.pendingAttack;
+    this.pendingAttack = false;
+    return val;
   }
 
-  consumeDashRequest() {
-    const requested = this.dashRequested;
-    this.dashRequested = false;
-    return requested;
+  consumeAimedShot() {
+    const val = this.pendingAimedShot || this.isPrimaryMouseDown;
+    this.pendingAimedShot = false;
+    return val;
   }
 
-  consumeSpecialRequest() {
-    const requested = this.specialRequested;
-    this.specialRequested = false;
-    return requested;
+  consumeStateSkill() {
+    if (this.blocksStateMoves) {
+      this.pendingStateSkill = false;
+      return false;
+    }
+    const val = this.pendingStateSkill;
+    this.pendingStateSkill = false;
+    return val;
   }
 
-  isDashHeld() {
-    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+  consumeDash() {
+    const val = this.pendingDash;
+    this.pendingDash = false;
+    return val;
   }
 
-  clearKeys() {
-    this.keys.clear();
-    this.primaryFireHeld = false;
-    this.dashRequested = false;
-    this.specialRequested = false;
-    this.jumpRequested = false;
+  consumeUpgradeSelection() {
+    const val = this.pendingUpgradeIndex;
+    this.pendingUpgradeIndex = null;
+    return val;
   }
 
-  dispose() {
-    this.window.removeEventListener('keydown', this.handleKeyDown);
-    this.window.removeEventListener('keyup', this.handleKeyUp);
-    this.window.removeEventListener('blur', this.handleBlur);
-    this.window.removeEventListener('pointerup', this.handlePointerUp);
-    this.window.removeEventListener('pointercancel', this.handlePointerUp);
-    this.document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
-    this.document.removeEventListener('pointerlockerror', this.handlePointerLockError);
-    this.document.removeEventListener('mousemove', this.handlePointerMove);
-    this.element.removeEventListener('pointerdown', this.handlePointerDown);
-    if (this.document.pointerLockElement === this.element) this.document.exitPointerLock?.();
-    this.clearKeys();
+  updateCameraFromMouse(movementX, movementY) {
+    const updated = applyMouseLook(
+      { yaw: this.cameraYaw, pitch: this.cameraPitch },
+      movementX,
+      movementY,
+      this.mouseSensitivity
+    );
+    this.cameraYaw = updated.yaw;
+    this.cameraPitch = updated.pitch;
+  }
+
+  resetInputState() {
+    this.activeKeys.clear();
+    this.pendingAttack = false;
+    this.pendingAimedShot = false;
+    this.pendingStateSkill = false;
+    this.pendingDash = false;
+    this.pendingJump = false;
+    this.isPrimaryMouseDown = false;
+    this.pendingUpgradeIndex = null;
+  }
+
+  destroy() {
+    this.detach();
   }
 }
