@@ -11,7 +11,7 @@ let menu = null;
 let game = null;
 let gameModulePromise = null;
 
-async function startGame(runConfig) {
+async function startGame(runConfig, mouseSensitivity) {
   if (!game) {
     gameModulePromise ??= import('./game/GameApp.js');
     const { GameApp } = await gameModulePromise;
@@ -20,13 +20,14 @@ async function startGame(runConfig) {
       onHudUpdate: (snapshot) => menu?.updateHud(snapshot),
       onLevelUp: (choices) => menu?.setLevelUpChoices(choices),
       onRunEnd: (result) => menu?.finishRun(result),
+      onPointerLockChange: (locked, details) => menu?.setPointerLocked(locked, details),
       onExtractRequest: () => {
         const result = game?.extractCurrentRun();
         if (result) menu?.finishRun(result);
       },
     });
   }
-  game.start(runConfig);
+  game.start(runConfig, { mouseSensitivity });
 }
 
 menu = new MenuController(uiRoot, flow, {
@@ -35,6 +36,7 @@ menu = new MenuController(uiRoot, flow, {
   onSetPause: (paused) => game?.setPaused(paused),
   onResume: () => game?.setPaused(false),
   onChooseRunUpgrade: (upgradeId) => game?.chooseUpgrade(upgradeId),
+  onMouseSensitivityChange: (value) => game?.setMouseSensitivity(value),
   onExtractRun: () => {
     const result = game?.extractCurrentRun();
     if (result) menu?.finishRun(result);

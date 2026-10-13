@@ -38,6 +38,14 @@ function createSession(options = {}) {
   );
 }
 
+function unlockDash(session) {
+  session.gainXp(session.xpToNext);
+  assert.equal(session.status, 'level-up');
+  assert.ok(session.pendingChoices.some((choice) => choice.id === 'unlockDash'));
+  assert.equal(session.chooseUpgrade('unlockDash').ok, true);
+  return session;
+}
+
 describe('v0.3: élites con aura escalan y aparecen desde la oleada configurada', () => {
   it('marca enemigos como élite con aura cuando el dado cae por debajo del umbral', () => {
     // Aseguramos que la probabilidad siempre acierte (0 está por debajo del umbral de élite)
@@ -96,7 +104,7 @@ describe('v0.3: el minijefe aparece al cumplirse el hito y entrega bonificación
 
 describe('v0.3: la esquiva (dash) otorga invulnerabilidad y respeta el enfriamiento', () => {
   it('el dash se resuelve con desplazamiento inmediato y no se puede encadenar', () => {
-    const session = createSession({ spawnInitialWave: false });
+    const session = unlockDash(createSession({ spawnInitialWave: false }));
     const before = { x: session.player.x, z: session.player.z };
     const res = session.dash({ x: 1, z: 0 });
     assert.equal(res.ok, true);
@@ -135,18 +143,22 @@ describe('v0.3: el ataque básico se dispara automáticamente en cada tick cuand
   });
 });
 
-describe('v0.3: la mejora Impulso Etéreo reduce el enfriamiento de dash', () => {
-  it('elige la mejora y reduce el cooldown de dash', () => {
+describe('v0.3: la mejora Impulso Etéreo mejora la esquiva desbloqueada', () => {
+  it('solo aparece tras desbloquear Shift y reduce enfriamiento/aumenta distancia', () => {
     const session = createSession({ spawnInitialWave: false, random: fixedRandom([0.1, 0.5, 0.9]) });
-    // Forzamos una subida de nivel con XP para desplegar opciones
-    session.gainXp(9999);
-    assert.equal(session.status, 'level-up');
-    const dashChoice = session.pendingChoices.find((c) => c.id === 'dashFlow');
-    const choice = dashChoice ? 'dashFlow' : session.pendingChoices[0].id;
-    session.chooseUpgrade(choice);
-    if (choice === 'dashFlow') {
-      assert.ok(session.stats.dash.cooldown < 2.4, 'el cooldown debe reducirse');
-      assert.ok(session.stats.dash.distance > 4.2, 'la distancia debe aumentar');
+    assert.ok(!session.rollUpgradeChoices(3).some((choice) => choice.id === 'dashFlow'));
+    unlockDash(session);
+
+    let choices = [];
+    for (let attempt = 0; attempt < 100 && !choices.some((choice) => choice.id === 'dashFlow'); attempt += 1) {
+      choices = session.rollUpgradeChoices(3);
     }
+    assert.ok(choices.some((choice) => choice.id === 'dashFlow'), 'el catálogo puede ofrecer la mejora de esquiva');
+    session.pendingLevelUps = 1;
+    session.pendingChoices = choices;
+    session.status = 'level-up';
+    assert.equal(session.chooseUpgrade('dashFlow').ok, true);
+    assert.ok(session.stats.dash.cooldown < 2.4, 'el cooldown debe reducirse');
+    assert.ok(session.stats.dash.distance > 4.2, 'la distancia debe aumentar');
   });
 });

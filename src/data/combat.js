@@ -210,12 +210,30 @@ export const BOSS_PROFILES = {
 
 export const RUN_UPGRADES = [
   {
+    id: 'unlockSpecial',
+    name: 'Despertar especial',
+    category: 'Desbloqueo',
+    icon: '✦',
+    unlockSkill: 'special',
+    maxRank: 1,
+    description: 'Desbloquea el movimiento especial de tu compañero con Q.',
+  },
+  {
+    id: 'unlockDash',
+    name: 'Despertar de esquiva',
+    category: 'Desbloqueo',
+    icon: '➤',
+    unlockSkill: 'dash',
+    maxRank: 1,
+    description: 'Desbloquea la esquiva con Shift, con breve invulnerabilidad.',
+  },
+  {
     id: 'attackPower',
     name: 'Foco Ofensivo',
     category: 'Ataque',
     icon: '◈',
     maxRank: 5,
-    description: '+25% de daño de ataques básicos y especiales; +1 objetivo perforado en haces.',
+    description: '+25% de daño del básico y, tras desbloquearlo, del especial; +1 objetivo perforado en haces.',
   },
   {
     id: 'attackCadence',
@@ -223,7 +241,7 @@ export const RUN_UPGRADES = [
     category: 'Ataque',
     icon: 'ϟ',
     maxRank: 5,
-    description: '−15% de enfriamiento de ataques básicos y especiales.',
+    description: '−15% de enfriamiento del básico y, tras desbloquearlo, del especial.',
   },
   {
     id: 'attackPrism',
@@ -231,7 +249,7 @@ export const RUN_UPGRADES = [
     category: 'Ataque',
     icon: '❖',
     maxRank: 3,
-    description: '+1 haz adicional, +1 objetivo en abanicos y +12% de alcance.',
+    description: '+1 haz adicional, +1 objetivo y +12% de alcance del básico (y del especial tras desbloquearlo).',
   },
   {
     id: 'attackWave',
@@ -240,6 +258,33 @@ export const RUN_UPGRADES = [
     icon: '◎',
     maxRank: 4,
     description: '+25% de ancho de haz y +35% de empuje contra la horda.',
+  },
+  {
+    id: 'specialPower',
+    name: 'Núcleo especial',
+    category: 'Especial',
+    icon: '✧',
+    requiresSkill: 'special',
+    maxRank: 4,
+    description: '+25% de daño del movimiento especial.',
+  },
+  {
+    id: 'specialRange',
+    name: 'Alcance resonante',
+    category: 'Especial',
+    icon: '⟿',
+    requiresSkill: 'special',
+    maxRank: 4,
+    description: '+15% de alcance o radio del especial.',
+  },
+  {
+    id: 'specialCadence',
+    name: 'Pulso especial',
+    category: 'Especial',
+    icon: '◷',
+    requiresSkill: 'special',
+    maxRank: 4,
+    description: '−12% de enfriamiento del movimiento especial.',
   },
   {
     id: 'vitalityBoost',
@@ -270,8 +315,9 @@ export const RUN_UPGRADES = [
     name: 'Impulso Etéreo',
     category: 'Movilidad',
     icon: '➤',
-    maxRank: 3,
-    description: '−20% de enfriamiento de esquiva (Shift) y +15% de distancia.',
+    requiresSkill: 'dash',
+    maxRank: 4,
+    description: '−20% de enfriamiento de esquiva y +15% de distancia por rango.',
   },
 ];
 
