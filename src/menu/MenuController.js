@@ -1,4 +1,4 @@
-import { EQUIP_ITEMS, GACHA_POOL, TYPE_SYNERGIES, getEquippedItemModifiers, getGachaPokemon, rollNormalGacha, rollShinyGacha } from '../data/gddSystems.js';
+import { EQUIP_ITEMS, GACHA_POOL, TYPE_SYNERGIES, getEquippedItemModifiers, getGachaPokemon, getGachaMoveset, getPokemonSpriteUrl, rollNormalGacha, rollTenNormalGacha, rollShinyGacha } from '../data/gddSystems.js';
 import { getUpgradeCost, PERMANENT_UPGRADES, RARITY_RATES } from '../data/economy.js';
 import { REGIONS, STARTERS } from '../data/regions.js';
 import { getStarterMoveset, STAB_MULTIPLIER, DAMAGE_SCALE } from '../data/moves.js';
@@ -26,6 +26,7 @@ export class MenuController {
       onSetPause = () => {},
       onResume = () => {},
       onChooseRunUpgrade = () => {},
+      onRerollRunUpgrade = () => {},
       onExtractRun = () => {},
       onMouseSensitivityChange = () => {},
     } = {},
@@ -37,6 +38,7 @@ export class MenuController {
     this.onSetPause = onSetPause;
     this.onResume = onResume;
     this.onChooseRunUpgrade = onChooseRunUpgrade;
+    this.onRerollRunUpgrade = onRerollRunUpgrade;
     this.onExtractRun = onExtractRun;
     this.onMouseSensitivityChange = onMouseSensitivityChange;
     this.mouseSensitivity = this.loadMouseSensitivity();
@@ -45,6 +47,8 @@ export class MenuController {
     this.paused = false;
     this.levelUpChoices = null;
     this.equippedItemId = 'restos';
+    this.selectedCompanionOverride = null;
+    this.lastGachaCards = [];
     this.lastGachaBanner = null;
     this.hudState = this.createDefaultHudState();
 
@@ -310,6 +314,47 @@ export class MenuController {
         <p>El ataque <b>básico</b> se dispara solo. El <b>especial con Q</b> y la <b>esquiva con Shift</b> empiezan bloqueados y se desbloquean como opciones de nivel; sus estados también se muestran en el HUD. El tipo decide la eficacia y el STAB ×1,5 aplica cuando el movimiento coincide con el tipo del compañero.</p>
       </section>
       ${REGIONS.map((region) => this.renderPokedexRegion(region)).join('')}
+      ${this.renderGachaPokedexSection()}
+    `;
+  }
+
+  renderGachaPokedexSection() {
+    const unlockedSet = new Set(this.flow.profile.unlockedPokemon);
+    const unlockedGacha = GACHA_POOL.filter((p) => unlockedSet.has(p.id)).length;
+    return `
+      <section class="dex-region">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">COLECCIÓN GACHAPÓN · ${pad2(unlockedGacha)} / ${pad2(GACHA_POOL.length)} RECLUTADOS</span>
+            <h2>Compañeros Multirregión (Estilo PokéSurvivor)</h2>
+          </div>
+        </div>
+        <div class="dex-grid">
+          ${GACHA_POOL.map((entry) => {
+            const isUnlocked = unlockedSet.has(entry.id);
+            const synergy = TYPE_SYNERGIES[entry.chassisType];
+            return `
+              <article class="dex-card ${isUnlocked ? 'is-unlocked' : 'is-unknown'}" style="--creature-color:${entry.color};--creature-accent:${entry.accent}">
+                <div class="dex-card__art">
+                  <span class="dex-index">#${String(entry.dex).padStart(3, '0')}</span>
+                  <span class="creature-orb" aria-hidden="true">
+                    <img class="poke-sprite" src="${getPokemonSpriteUrl(entry.id)}" alt="" loading="lazy" />
+                    <i></i>
+                  </span>
+                  ${isUnlocked ? '' : '<span class="dex-lock" aria-label="Sin registrar">⌑</span>'}
+                </div>
+                <div class="dex-card__body">
+                  <span class="eyebrow">${escapeHtml(entry.region)} · ${escapeHtml(entry.rarityLabel.toUpperCase())}</span>
+                  <h3>${isUnlocked ? escapeHtml(entry.name) : 'Pokémon sin reclutar'}</h3>
+                  <div class="type-row">${entry.types.map((t) => this.typeChip(t)).join('')}</div>
+                  ${isUnlocked && synergy ? `<p class="dex-locked-note"><b>Pasiva (${escapeHtml(entry.chassisType)}):</b> ${escapeHtml(entry.isLegendary ? synergy.legendaryPassive.description : synergy.description)}</p>` : '<p class="dex-locked-note">Desbloquéalo con Tickets en el Gachapón.</p>'}
+                  <span class="dex-status">${isUnlocked ? (entry.isLegendary ? '★ LEGENDARIO' : 'RECLUTADO') : 'EN GACHAPÓN'}</span>
+                </div>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      </section>
     `;
   }
 
@@ -338,7 +383,7 @@ export class MenuController {
       <article class="dex-card ${unlocked ? 'is-unlocked' : 'is-unknown'}" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
         <div class="dex-card__art">
           <span class="dex-index">#${pad2(number).padStart(3, '0')}</span>
-          <span class="creature-orb" aria-hidden="true"><i></i></span>
+          <span class="creature-orb" aria-hidden="true"><img class="poke-sprite" src="${getPokemonSpriteUrl(starter.id)}" alt="" loading="lazy" /><i></i></span>
           ${unlocked ? '' : '<span class="dex-lock" aria-label="Sin registrar">⌑</span>'}
         </div>
         <div class="dex-card__body">
@@ -498,9 +543,14 @@ export class MenuController {
           <h2>Encuentros regionales</h2>
           <p>Usa tickets ganados jugando y derrotando jefes para desbloquear nuevos Pokémon base.</p>
           <div class="rarity-list">${RARITY_RATES.map((rarity) => `<div class="rarity-row"><span><i style="--rarity-color:${rarity.color}"></i>${rarity.label}</span><b>${rarity.percent}%</b></div>`).join('')}</div>
-          <button class="button button--primary" type="button" data-action="gacha-normal" ${tickets >= 1 ? '' : 'disabled'}>
-            ${tickets >= 1 ? 'Tirar Gachapón · 1 ▤ Ticket' : 'Sin Tickets (1 ▤ requerido)'}
-          </button>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem;">
+            <button class="button button--primary" type="button" data-action="gacha-normal" ${tickets >= 1 ? '' : 'disabled'}>
+              Tirar ×1 · 1 ▤
+            </button>
+            <button class="button button--secondary" type="button" data-action="gacha-ten" ${tickets >= 10 ? '' : 'disabled'}>
+              Tirar ×10 · 10 ▤ (Épico+)
+            </button>
+          </div>
         </article>
         <article class="gacha-panel gacha-panel--shiny">
           <div class="gacha-panel__label">02 / GACHA SHINY</div>
@@ -527,7 +577,7 @@ export class MenuController {
           ${region.starters.map((starter, index) => `
             <article class="starter-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
               <div class="starter-card__number">0${index + 1} <span>· ${starter.types.map(escapeHtml).join(' / ')}</span></div>
-              <div class="starter-card__art"><div class="starter-orb" aria-hidden="true"><i></i></div><span class="starter-orbit starter-orbit--one"></span><span class="starter-orbit starter-orbit--two"></span></div>
+              <div class="starter-card__art"><div class="starter-orb" aria-hidden="true"><img class="poke-sprite" src="${getPokemonSpriteUrl(starter.id)}" alt="" loading="lazy" /><i></i></div><span class="starter-orbit starter-orbit--one"></span><span class="starter-orbit starter-orbit--two"></span></div>
               <div class="starter-card__copy"><h2>${escapeHtml(starter.name)}</h2><p>${this.starterFlavour(starter)}</p>${this.renderStarterMoves(starter)}</div>
               <button class="button button--primary starter-pick" data-action="pick-starter" data-starter-id="${starter.id}">Elegir ${escapeHtml(starter.name)} <span aria-hidden="true">↗</span></button>
             </article>
@@ -576,6 +626,25 @@ export class MenuController {
         <section class="ready-layout">
           <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, usa los movimientos de ${escapeHtml(starter.name)}, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
             <div class="ready-objectives"><div><small>ENEMIGOS DETECTADOS</small><b>${region.enemies.map(escapeHtml).join(' · ')}</b></div><div><small>JEFE DE REGIÓN</small><b class="boss-text">${escapeHtml(region.boss)}</b></div></div>
+            <div class="ready-companions" style="margin: 0.75rem 0;">
+              <small style="display:block;margin-bottom:0.4rem;opacity:0.8;">ELEGIR COMPAÑERO DESBLOQUEADO (${this.flow.profile.unlockedPokemon.length} DISPONIBLES)</small>
+              <div style="display:flex;gap:0.45rem;flex-wrap:wrap;max-height:110px;overflow-y:auto;padding:4px 0;">
+                ${this.flow.profile.unlockedPokemon.map((pokeId) => {
+                  const gachaEntry = getGachaPokemon(pokeId);
+                  const starterEntry = STARTERS.find((s) => s.id === pokeId);
+                  const display = gachaEntry ?? starterEntry;
+                  if (!display) return '';
+                  const activeId = this.selectedCompanionOverride || starter.id;
+                  const isSelected = activeId === display.id;
+                  return `
+                    <button type="button" class="button ${isSelected ? 'button--primary' : 'button--secondary'}" data-action="select-companion" data-companion-id="${display.id}" style="padding:0.3rem 0.65rem;font-size:0.8rem;display:inline-flex;align-items:center;gap:6px;">
+                      <img src="${getPokemonSpriteUrl(display.id)}" alt="" style="width:24px;height:24px;image-rendering:pixelated;" />
+                      ${escapeHtml(display.name)}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
             <div class="ready-items" style="margin: 0.85rem 0;">
               <small style="display:block;margin-bottom:0.4rem;opacity:0.8;">OBJETO DE EQUIPO (GDD)</small>
               <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
@@ -590,7 +659,7 @@ export class MenuController {
             <button class="button button--primary button--launch" data-action="enter-run">Entrar a la partida <span aria-hidden="true">↗</span></button>
             <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> relativo a cámara <span>·</span> clic + ratón mirar <span>·</span> <kbd>Q</kbd>/<kbd>SHIFT</kbd> desbloqueables <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
           </div>
-          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>ATAQUE AUTOMÁTICO</span><b>${escapeHtml(getStarterMoveset(starter.id).basic.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).basic.type)} · ${SHAPE_LABELS[getStarterMoveset(starter.id).basic.shape] ?? 'Haz'}</small></b></div><div class="partner-card__stat"><span>ESPECIAL · Q · BLOQUEADO AL INICIO</span><b>${escapeHtml(getStarterMoveset(starter.id).special.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).special.type)} · se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>ESQUIVA · SHIFT · BLOQUEADA AL INICIO</span><b>Impulso evasivo <small>· se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· elige 1 de 3 mejoras por nivel</small></b></div></aside>
+          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><img class="poke-sprite" src="${getPokemonSpriteUrl(starter.id)}" alt="" loading="lazy" /><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>ATAQUE AUTOMÁTICO</span><b>${escapeHtml(getStarterMoveset(starter.id).basic.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).basic.type)} · ${SHAPE_LABELS[getStarterMoveset(starter.id).basic.shape] ?? 'Haz'}</small></b></div><div class="partner-card__stat"><span>ESPECIAL · Q · BLOQUEADO AL INICIO</span><b>${escapeHtml(getStarterMoveset(starter.id).special.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).special.type)} · se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>ESQUIVA · SHIFT · BLOQUEADA AL INICIO</span><b>Impulso evasivo <small>· se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· elige 1 de 3 mejoras por nivel</small></b></div></aside>
         </section>
       </main>
     `;
@@ -609,6 +678,9 @@ export class MenuController {
 
     return `
       <div class="run-hud">
+        <div class="megabonk-top-xp" role="progressbar" aria-label="Barra superior de experiencia" aria-valuenow="${xpPercent}">
+          <div id="megabonk-top-xp-fill" class="megabonk-top-xp__fill" style="width:${xpPercent}%"></div>
+        </div>
         <header class="run-hud__top">
           <div class="run-location">
             <span class="run-emblem">${escapeHtml(run.regionName.slice(0, 1))}</span>
@@ -762,6 +834,11 @@ export class MenuController {
               </button>
             `).join('')}
           </div>
+          <div style="margin-top:1rem;display:flex;justify-content:center;">
+            <button type="button" class="button button--secondary" data-action="reroll-run-upgrade" ${(this.hudState?.rerollsRemaining ?? 2) > 0 ? '' : 'disabled'}>
+              🎲 Cambiar opciones (${this.hudState?.rerollsRemaining ?? 2})
+            </button>
+          </div>
         </section>
       </div>
     `;
@@ -811,6 +888,42 @@ export class MenuController {
         this.flow.chooseStarter(target.dataset.starterId);
         this.render();
         break;
+      case 'select-companion': {
+        const compId = target.dataset.companionId;
+        if (compId && this.flow.profile.unlockedPokemon.includes(compId)) {
+          this.selectedCompanionOverride = compId;
+          this.render();
+        }
+        break;
+      }
+      case 'gacha-ten': {
+        if (this.flow.profile.resources.tickets < 10) {
+          this.showError('Necesitas 10 Tickets para la tirada ×10.');
+          break;
+        }
+        this.flow.profile.resources.tickets -= 10;
+        const pulls = rollTenNormalGacha();
+        let newCount = 0;
+        let refundCoins = 0;
+        for (const p of pulls) {
+          if (!this.flow.profile.unlockedPokemon.includes(p.id)) {
+            this.flow.profile.unlockedPokemon.push(p.id);
+            newCount += 1;
+          } else {
+            refundCoins += 15;
+          }
+        }
+        this.flow.profile.resources.coins += refundCoins;
+        const names = pulls.map((p) => p.name).slice(0, 5).join(', ');
+        this.lastGachaBanner = `¡Tirada ×10 completada! (${newCount} nuevos, +${refundCoins} MON por repetidos): ${names}...`;
+        this.flow.store.save(this.flow.profile);
+        this.render();
+        break;
+      }
+      case 'reroll-run-upgrade': {
+        this.onRerollRunUpgrade?.();
+        break;
+      }
       case 'select-item': {
         const itemId = target.dataset.itemId;
         if (itemId && EQUIP_ITEMS[itemId]) {
@@ -859,6 +972,21 @@ export class MenuController {
         if (!runConfig) {
           this.render();
           break;
+        }
+        if (this.selectedCompanionOverride && this.flow.profile.unlockedPokemon.includes(this.selectedCompanionOverride)) {
+          const gachaComp = getGachaPokemon(this.selectedCompanionOverride);
+          const starterComp = STARTERS.find((s) => s.id === this.selectedCompanionOverride);
+          const chosenComp = gachaComp ?? starterComp;
+          if (chosenComp) {
+            runConfig.starter = {
+              id: chosenComp.id,
+              name: chosenComp.name,
+              types: [...chosenComp.types],
+              color: chosenComp.color,
+              accent: chosenComp.accent,
+              isLegendary: Boolean(chosenComp.isLegendary),
+            };
+          }
         }
         runConfig.equippedItemId = this.equippedItemId;
         runConfig.equippedItem = getEquippedItemModifiers(this.equippedItemId);
@@ -977,9 +1105,11 @@ export class MenuController {
     if (xpText) xpText.textContent = `${this.hudState.xp} / ${this.hudState.xpToNext} XP`;
 
     const xpFill = this.root.querySelector('#run-xp-fill');
-    if (xpFill) {
+    const topXpFill = this.root.querySelector('#megabonk-top-xp-fill');
+    if (xpFill || topXpFill) {
       const xpPct = Math.max(0, Math.min(100, Math.round((this.hudState.xp / Math.max(1, this.hudState.xpToNext)) * 100)));
-      xpFill.style.width = `${xpPct}%`;
+      if (xpFill) xpFill.style.width = `${xpPct}%`;
+      if (topXpFill) topXpFill.style.width = `${xpPct}%`;
     }
 
     const attackSlot = this.root.querySelector('#run-attack-slot');
