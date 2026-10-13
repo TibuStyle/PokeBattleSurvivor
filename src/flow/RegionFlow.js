@@ -93,11 +93,22 @@ export class RegionFlow {
    * Punto de integración para el futuro sistema de fin de partida/recompensas.
    * En una victoria, el jefe abre la siguiente región una sola vez.
    */
-  completeRun({ victory = false, elapsedSeconds = 0, rewards = {} } = {}) {
+  completeRun({
+    victory = false,
+    elapsedSeconds = 0,
+    rewards = {},
+    kills = 0,
+    level = 1,
+    orbsCollected = 0,
+    upgrades = {},
+  } = {}) {
     if (this.screen !== 'run' || !this.activeRun) return null;
 
     const progress = this.profile.regions[this.activeRun.regionId];
     const elapsed = Number.isFinite(Number(elapsedSeconds)) ? Math.max(0, Math.floor(Number(elapsedSeconds))) : 0;
+    const safeKills = Number.isFinite(Number(kills)) ? Math.max(0, Math.floor(Number(kills))) : 0;
+    const safeLevel = Number.isFinite(Number(level)) ? Math.max(1, Math.floor(Number(level))) : 1;
+    const safeOrbs = Number.isFinite(Number(orbsCollected)) ? Math.max(0, Math.floor(Number(orbsCollected))) : 0;
     const awarded = {
       coins: this.#addReward('coins', rewards.coins),
       tickets: this.#addReward('tickets', rewards.tickets),
@@ -119,6 +130,10 @@ export class RegionFlow {
       regionId: this.activeRun.regionId,
       victory,
       elapsedSeconds: elapsed,
+      kills: safeKills,
+      level: safeLevel,
+      orbsCollected: safeOrbs,
+      upgrades: upgrades && typeof upgrades === 'object' ? { ...upgrades } : {},
       rewards: awarded,
       unlockedRegionId,
     };

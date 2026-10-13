@@ -10,19 +10,56 @@ const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => (
 }[character]));
 
 export class MenuController {
-  constructor(root, flow, { onStartRun = () => {}, onReturnToHub = () => {}, onSetPause = () => {}, onResume = () => {} } = {}) {
+  constructor(
+    root,
+    flow,
+    {
+      onStartRun = () => {},
+      onReturnToHub = () => {},
+      onSetPause = () => {},
+      onResume = () => {},
+      onChooseRunUpgrade = () => {},
+      onExtractRun = () => {},
+    } = {},
+  ) {
     this.root = root;
     this.flow = flow;
     this.onStartRun = onStartRun;
     this.onReturnToHub = onReturnToHub;
     this.onSetPause = onSetPause;
     this.onResume = onResume;
+    this.onChooseRunUpgrade = onChooseRunUpgrade;
+    this.onExtractRun = onExtractRun;
     this.activeTab = 'regions';
     this.paused = false;
+    this.levelUpChoices = null;
+    this.hudState = this.createDefaultHudState();
 
     this.handleClick = this.handleClick.bind(this);
     this.root.addEventListener('click', this.handleClick);
     this.render();
+  }
+
+  createDefaultHudState() {
+    return {
+      elapsedSeconds: 0,
+      wave: 1,
+      status: 'running',
+      hp: 100,
+      maxHp: 100,
+      level: 1,
+      xp: 0,
+      xpToNext: 40,
+      kills: 0,
+      orbsCollected: 0,
+      activeEnemies: 0,
+      psybeamDamage: 28,
+      psybeamBeams: 1,
+      psybeamCooldown: 0.42,
+      activeUpgrades: [],
+      pendingChoices: null,
+      boss: null,
+    };
   }
 
   render() {
@@ -71,7 +108,7 @@ export class MenuController {
         </header>
         <main class="hub-content">
           ${this.renderHubTab()}
-          <footer class="hub-footer"><span>PROTOTIPO 0.1</span><span>Partida local · progreso guardado en este navegador</span></footer>
+          <footer class="hub-footer"><span>PROTOTIPO 0.2</span><span>Partida local · progreso guardado en este navegador</span></footer>
         </main>
       </div>
     `;
@@ -100,7 +137,7 @@ export class MenuController {
         <div class="welcome-copy">
           <span class="eyebrow"><span class="status-dot"></span> PROTOCOLO DE CAMPO · REGIÓN ${String(suggestedRegion.generation).padStart(2, '0')}</span>
           <h1>Elige tu región.<br /><em>Sobrevive a la horda.</em></h1>
-          <p>Una aventura breve para probar el combate 3D, el movimiento libre y las builds de cada inicial.</p>
+          <p>Dispara Psicorrayo contra las oleadas regionales, recoge orbes de experiencia y elige una de tres mejoras al subir de nivel.</p>
           <div class="welcome-actions">
             <button class="button button--primary" data-action="open-region" data-region-id="${suggestedRegion.id}">
               ${chosenStarter ? 'Continuar expedición' : 'Elegir inicial'} <span aria-hidden="true">↗</span>
@@ -212,7 +249,7 @@ export class MenuController {
           `;
         }).join('')}
       </div>
-      <p class="implementation-note"><span>i</span> Las compras y el guardado local ya están cableados; las monedas se conectarán a las recompensas cuando exista la pantalla de fin de partida.</p>
+      <p class="implementation-note"><span>i</span> Las mejoras permanentes se aplican directamente a tu vida máxima, velocidad, cadencia de Psicorrayo, imán de orbes y experiencia ganada en cada partida.</p>
     `;
   }
 
@@ -278,12 +315,12 @@ export class MenuController {
       <main class="focus-screen region-ready-screen">
         <header class="focus-header"><button class="text-button" data-action="back-to-hub">← Volver al mapa</button><span class="focus-step">${escapeHtml(region.name.toUpperCase())} <i></i> EXPEDICIÓN</span></header>
         <section class="ready-layout">
-          <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las oleadas, reúne experiencia y construye una combinación de movimientos antes de desafiar a ${escapeHtml(region.boss)}.</p>
+          <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, dispara Psicorrayo, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
             <div class="ready-objectives"><div><small>ENEMIGOS DETECTADOS</small><b>${region.enemies.map(escapeHtml).join(' · ')}</b></div><div><small>JEFE DE REGIÓN</small><b class="boss-text">${escapeHtml(region.boss)}</b></div></div>
             <button class="button button--primary button--launch" data-action="enter-run">Entrar a la partida <span aria-hidden="true">↗</span></button>
-            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> ratón apuntar <span>·</span> clic disparar</p>
+            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> ratón apuntar <span>·</span> clic Psicorrayo <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
           </div>
-          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>HABILIDAD DE APUNTADO</span><b>Psicorrayo <small>· clic izquierdo</small></b></div><div class="partner-card__stat"><span>MOVIMIENTO 3D</span><b>WASD <small>· salto con espacio</small></b></div></aside>
+          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>HABILIDAD DE APUNTADO</span><b>Psicorrayo <small>· daño, empuje y perforación</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· 1 de 3 mejoras por nivel</small></b></div></aside>
         </section>
       </main>
     `;
@@ -292,18 +329,147 @@ export class MenuController {
   renderRunHud() {
     const run = this.flow.activeRun;
     if (!run) return '';
+    const hud = this.hudState ?? this.createDefaultHudState();
+    const hpPercent = Math.max(0, Math.min(100, Math.round((hud.hp / Math.max(1, hud.maxHp)) * 100)));
+    const xpPercent = Math.max(0, Math.min(100, Math.round((hud.xp / Math.max(1, hud.xpToNext)) * 100)));
+    const isLowHp = hpPercent <= 30;
+    const choices = Array.isArray(this.levelUpChoices) && this.levelUpChoices.length > 0
+      ? this.levelUpChoices
+      : null;
+
     return `
       <div class="run-hud">
         <header class="run-hud__top">
-          <div class="run-location"><span class="run-emblem">${run.regionName.slice(0, 1)}</span><div><small>${escapeHtml(run.regionName)} · EXPEDICIÓN</small><b>${escapeHtml(run.mapName)}</b></div></div>
-          <div class="run-timer"><small>TIEMPO</small><b id="run-clock">00:00</b></div>
+          <div class="run-location">
+            <span class="run-emblem">${escapeHtml(run.regionName.slice(0, 1))}</span>
+            <div>
+              <small>${escapeHtml(run.regionName)} · <span id="run-wave">OLEADA ${String(hud.wave).padStart(2, '0')}</span></small>
+              <b>${escapeHtml(run.mapName)}</b>
+            </div>
+          </div>
+          <div class="run-metrics">
+            <div class="run-timer"><small>TIEMPO</small><b id="run-clock">${this.formatTime(hud.elapsedSeconds)}</b></div>
+            <div class="run-timer"><small>BAJAS</small><b id="run-kills">${hud.kills}</b></div>
+            <div class="run-timer"><small>ORBES</small><b id="run-orbs">${hud.orbsCollected}</b></div>
+          </div>
           <button class="hud-pause" data-action="pause-run" aria-label="Pausar partida">Ⅱ</button>
         </header>
-        <div class="run-hud__bottom"><span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}</span><span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>CLIC</kbd> Psicorrayo</span><button class="run-pause-text" data-action="pause-run">PAUSA <span>Ⅱ</span></button></div>
+
+        <aside class="run-vitals" aria-label="Estado del compañero">
+          <div class="vital-block">
+            <div class="vital-row">
+              <span class="vital-label">♥ VIDA</span>
+              <b id="run-hp-text">${hud.hp} / ${hud.maxHp} PS</b>
+            </div>
+            <div class="hud-bar hud-bar--hp ${isLowHp ? 'is-critical' : ''}" id="run-hp-bar">
+              <div id="run-hp-fill" class="hud-bar__fill" style="width:${hpPercent}%"></div>
+            </div>
+          </div>
+
+          <div class="vital-block">
+            <div class="vital-row">
+              <span id="run-level-badge" class="hud-level-badge">NV. ${String(hud.level).padStart(2, '0')}</span>
+              <b id="run-xp-text">${hud.xp} / ${hud.xpToNext} XP</b>
+            </div>
+            <div class="hud-bar hud-bar--xp">
+              <div id="run-xp-fill" class="hud-bar__fill" style="width:${xpPercent}%"></div>
+            </div>
+          </div>
+
+          <div class="run-psybeam-row">
+            <span>◈ PSICORRAYO</span>
+            <b id="run-psybeam-stats">${hud.psybeamDamage} DAÑO · ${hud.psybeamBeams} ${hud.psybeamBeams === 1 ? 'HAZ' : 'HACES'}</b>
+          </div>
+
+          <div id="run-upgrades-strip" class="run-upgrades-strip">
+            ${this.renderActiveUpgradesStrip(hud.activeUpgrades)}
+          </div>
+        </aside>
+
+        <div id="run-boss-banner" class="run-boss-banner ${hud.boss ? 'is-visible' : ''}">
+          ${this.renderBossBanner(hud.boss)}
         </div>
-        ${this.paused ? `
-          <div class="pause-backdrop"><section class="pause-dialog" role="dialog" aria-modal="true" aria-labelledby="pause-title"><span class="eyebrow">PARTIDA EN PAUSA</span><h2 id="pause-title">Toma aire.</h2><p>La horda espera. Tu progreso de región está guardado entre sesiones.</p><button class="button button--primary" data-action="resume-run">Volver a la partida <span>↗</span></button><button class="text-button pause-exit" data-action="return-hub">Abandonar expedición</button></section></div>
+
+        <div class="run-hud__bottom">
+          <span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}</span>
+          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>CLIC</kbd> Psicorrayo <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
+          <button class="run-pause-text" data-action="pause-run">PAUSA <span>Ⅱ</span></button>
+        </div>
+
+        ${choices ? this.renderLevelUpModal(choices, hud.level, run.starter.name) : ''}
+
+        ${this.paused && !choices ? `
+          <div class="pause-backdrop">
+            <section class="pause-dialog" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+              <span class="eyebrow">PARTIDA EN PAUSA</span>
+              <h2 id="pause-title">Toma aire.</h2>
+              <p>La horda espera. Puedes continuar combatiendo, retirarte con el botín reunido o volver al mapa.</p>
+              <button class="button button--primary" data-action="resume-run">Volver a la partida <span>↗</span></button>
+              <button class="button button--secondary pause-extract" data-action="extract-run">Retirarse con botín <span>→</span></button>
+              <button class="text-button pause-exit" data-action="return-hub">Abandonar expedición</button>
+            </section>
+          </div>
         ` : ''}
+      </div>
+    `;
+  }
+
+  renderActiveUpgradesStrip(activeUpgrades = []) {
+    if (!Array.isArray(activeUpgrades) || activeUpgrades.length === 0) {
+      return '<span class="upgrade-pill upgrade-pill--empty">Recoge orbes de XP para elegir mejoras</span>';
+    }
+    return activeUpgrades.map((upgrade) => `
+      <span class="upgrade-pill" title="${escapeHtml(upgrade.name)}">
+        <i>${escapeHtml(upgrade.icon)}</i>
+        ${escapeHtml(upgrade.name)}
+        <b>N${upgrade.rank}</b>
+      </span>
+    `).join('');
+  }
+
+  renderBossBanner(boss) {
+    if (!boss) return '';
+    const bossPct = Math.max(0, Math.min(100, Math.round((boss.hp / Math.max(1, boss.maxHp)) * 100)));
+    return `
+      <div class="boss-banner__row">
+        <span>⚠ JEFE REGIONAL · <strong>${escapeHtml(boss.name)}</strong></span>
+        <b>${boss.hp} / ${boss.maxHp} PS</b>
+      </div>
+      <div class="hud-bar hud-bar--boss">
+        <div class="hud-bar__fill" style="width:${bossPct}%"></div>
+      </div>
+    `;
+  }
+
+  renderLevelUpModal(choices, level, starterName) {
+    return `
+      <div class="levelup-backdrop">
+        <section class="levelup-dialog" role="dialog" aria-modal="true" aria-labelledby="levelup-title">
+          <header class="levelup-header">
+            <span class="eyebrow"><span class="status-dot"></span> SUBIDA DE NIVEL · NV. ${String(level).padStart(2, '0')}</span>
+            <h2 id="levelup-title">Elige una de tres mejoras.</h2>
+            <p>Potencia a ${escapeHtml(starterName)} para resistir la siguiente oleada. Haz clic en una tarjeta o pulsa <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>.</p>
+          </header>
+          <div class="levelup-grid">
+            ${choices.map((choice, index) => `
+              <button
+                type="button"
+                class="levelup-card"
+                data-action="choose-run-upgrade"
+                data-upgrade-id="${escapeHtml(choice.id)}"
+              >
+                <div class="levelup-card__top">
+                  <span class="levelup-key">[${index + 1}] · ${escapeHtml(choice.category)}</span>
+                  <span class="levelup-rank">RANGO ${choice.currentRank} → ${choice.nextRank}/${choice.maxRank}</span>
+                </div>
+                <div class="levelup-card__icon">${escapeHtml(choice.icon)}</div>
+                <h3>${escapeHtml(choice.name)}</h3>
+                <p>${escapeHtml(choice.description)}</p>
+                <span class="levelup-card__cta">Elegir mejora <span aria-hidden="true">↗</span></span>
+              </button>
+            `).join('')}
+          </div>
+        </section>
       </div>
     `;
   }
@@ -312,8 +478,26 @@ export class MenuController {
     const result = this.flow.lastRunSummary;
     if (!result) return this.renderHub();
     const region = REGIONS.find((entry) => entry.id === result.regionId);
+    const kills = result.kills ?? 0;
+    const level = result.level ?? 1;
+    const orbs = result.orbsCollected ?? 0;
+
     return `
-      <main class="focus-screen results-screen"><span class="eyebrow">INFORME DE EXPEDICIÓN · ${escapeHtml(region?.name ?? '')}</span><h1>${result.victory ? 'Región superada.' : 'Expedición terminada.'}</h1><p>Tiempo de campo: ${this.formatTime(result.elapsedSeconds)} · Monedas: ${result.rewards.coins} · Tickets: ${result.rewards.tickets} · Gemas: ${result.rewards.gems}</p>${result.unlockedRegionId ? `<p class="unlock-banner">Nueva región disponible: ${escapeHtml(REGIONS.find((entry) => entry.id === result.unlockedRegionId)?.name ?? result.unlockedRegionId)}</p>` : ''}<button class="button button--primary" data-action="back-to-hub">Volver al mapa <span>↗</span></button></main>
+      <main class="focus-screen results-screen">
+        <span class="eyebrow">INFORME DE EXPEDICIÓN · ${escapeHtml(region?.name ?? '')}</span>
+        <h1>${result.victory ? 'Región superada.' : 'Expedición terminada.'}</h1>
+        <p>Tiempo de campo: ${this.formatTime(result.elapsedSeconds)} · Bajas de horda: ${kills} · Nivel alcanzado: NV. ${String(level).padStart(2, '0')} (${orbs} orbes XP)</p>
+        <div class="results-grid">
+          <div class="results-stat"><small>MONEDAS GANADAS</small><b>+${result.rewards.coins} ◆</b></div>
+          <div class="results-stat"><small>TICKETS DE RECLUTAMIENTO</small><b>+${result.rewards.tickets} ▤</b></div>
+          <div class="results-stat"><small>GEMAS VARIOCOLOR</small><b>+${result.rewards.gems} ✦</b></div>
+        </div>
+        ${result.unlockedRegionId ? `<p class="unlock-banner">Nueva región disponible: ${escapeHtml(REGIONS.find((entry) => entry.id === result.unlockedRegionId)?.name ?? result.unlockedRegionId)}</p>` : ''}
+        <div class="results-actions">
+          <button class="button button--primary" data-action="back-to-hub">Volver al mapa <span>↗</span></button>
+          <button class="button button--secondary" data-action="results-upgrades">Invertir monedas en Mejoras <span>→</span></button>
+        </div>
+      </main>
     `;
   }
 
@@ -341,6 +525,8 @@ export class MenuController {
           break;
         }
         this.paused = false;
+        this.levelUpChoices = null;
+        this.hudState = this.createDefaultHudState();
         this.render();
         try {
           await this.onStartRun(runConfig);
@@ -357,12 +543,33 @@ export class MenuController {
         if (!result.ok) this.showError(result.reason === 'not-enough-coins' ? `Necesitas ${result.cost} monedas para esa mejora.` : 'Esa mejora ya está al máximo.');
         break;
       }
+      case 'choose-run-upgrade': {
+        const upgradeId = target.dataset.upgradeId;
+        if (upgradeId) {
+          this.onChooseRunUpgrade(upgradeId);
+        }
+        break;
+      }
       case 'pause-run':
+        if (this.levelUpChoices?.length) break;
         this.onSetPause(!this.paused);
         break;
       case 'resume-run':
         this.onSetPause(false);
         this.onResume();
+        break;
+      case 'extract-run':
+        this.paused = false;
+        this.levelUpChoices = null;
+        this.onExtractRun();
+        break;
+      case 'results-upgrades':
+        this.onReturnToHub();
+        this.flow.returnToHub();
+        this.activeTab = 'upgrades';
+        this.paused = false;
+        this.levelUpChoices = null;
+        this.render();
         break;
       case 'return-hub':
       case 'back-to-hub':
@@ -370,6 +577,7 @@ export class MenuController {
         this.flow.returnToHub();
         this.activeTab = 'regions';
         this.paused = false;
+        this.levelUpChoices = null;
         this.render();
         break;
       default:
@@ -382,9 +590,76 @@ export class MenuController {
     if (this.flow.screen === 'run') this.render();
   }
 
-  updateHud({ elapsedSeconds }) {
+  setLevelUpChoices(choices) {
+    const normalized = Array.isArray(choices) && choices.length > 0 ? [...choices] : null;
+    this.levelUpChoices = normalized;
+    if (this.flow.screen === 'run') this.render();
+  }
+
+  finishRun(result) {
+    this.paused = false;
+    this.levelUpChoices = null;
+    this.flow.completeRun(result);
+    this.render();
+  }
+
+  updateHud(snapshot = {}) {
+    this.hudState = {
+      ...this.hudState,
+      ...snapshot,
+    };
+
     const clock = this.root.querySelector('#run-clock');
-    if (clock) clock.textContent = this.formatTime(elapsedSeconds);
+    if (clock) clock.textContent = this.formatTime(this.hudState.elapsedSeconds);
+
+    const wave = this.root.querySelector('#run-wave');
+    if (wave) wave.textContent = `OLEADA ${String(this.hudState.wave ?? 1).padStart(2, '0')}`;
+
+    const kills = this.root.querySelector('#run-kills');
+    if (kills) kills.textContent = String(this.hudState.kills ?? 0);
+
+    const orbs = this.root.querySelector('#run-orbs');
+    if (orbs) orbs.textContent = String(this.hudState.orbsCollected ?? 0);
+
+    const hpText = this.root.querySelector('#run-hp-text');
+    if (hpText) hpText.textContent = `${this.hudState.hp} / ${this.hudState.maxHp} PS`;
+
+    const hpFill = this.root.querySelector('#run-hp-fill');
+    const hpBar = this.root.querySelector('#run-hp-bar');
+    if (hpFill) {
+      const hpPct = Math.max(0, Math.min(100, Math.round((this.hudState.hp / Math.max(1, this.hudState.maxHp)) * 100)));
+      hpFill.style.width = `${hpPct}%`;
+      hpBar?.classList.toggle('is-critical', hpPct <= 30);
+    }
+
+    const levelBadge = this.root.querySelector('#run-level-badge');
+    if (levelBadge) levelBadge.textContent = `NV. ${String(this.hudState.level ?? 1).padStart(2, '0')}`;
+
+    const xpText = this.root.querySelector('#run-xp-text');
+    if (xpText) xpText.textContent = `${this.hudState.xp} / ${this.hudState.xpToNext} XP`;
+
+    const xpFill = this.root.querySelector('#run-xp-fill');
+    if (xpFill) {
+      const xpPct = Math.max(0, Math.min(100, Math.round((this.hudState.xp / Math.max(1, this.hudState.xpToNext)) * 100)));
+      xpFill.style.width = `${xpPct}%`;
+    }
+
+    const psybeamStats = this.root.querySelector('#run-psybeam-stats');
+    if (psybeamStats) {
+      const beams = this.hudState.psybeamBeams ?? 1;
+      psybeamStats.textContent = `${this.hudState.psybeamDamage ?? 28} DAÑO · ${beams} ${beams === 1 ? 'HAZ' : 'HACES'}`;
+    }
+
+    const upgradesStrip = this.root.querySelector('#run-upgrades-strip');
+    if (upgradesStrip) {
+      upgradesStrip.innerHTML = this.renderActiveUpgradesStrip(this.hudState.activeUpgrades);
+    }
+
+    const bossBanner = this.root.querySelector('#run-boss-banner');
+    if (bossBanner) {
+      bossBanner.classList.toggle('is-visible', Boolean(this.hudState.boss));
+      bossBanner.innerHTML = this.renderBossBanner(this.hudState.boss);
+    }
   }
 
   formatTime(seconds) {

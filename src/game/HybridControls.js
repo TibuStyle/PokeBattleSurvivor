@@ -1,16 +1,25 @@
 import * as THREE from 'three';
 
 const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
+const UPGRADE_KEY_INDEX = {
+  Digit1: 0,
+  Digit2: 1,
+  Digit3: 2,
+  Numpad1: 0,
+  Numpad2: 1,
+  Numpad3: 2,
+};
 
 /** WASD + salto + puntería de ratón convertida de pantalla a suelo 3D. */
 export class HybridControls {
-  constructor({ element, camera, player, onPrimaryFire, onJump, onPause }) {
+  constructor({ element, camera, player, onPrimaryFire, onJump, onPause, onSelectUpgrade }) {
     this.element = element;
     this.camera = camera;
     this.player = player;
     this.onPrimaryFire = onPrimaryFire;
     this.onJump = onJump;
     this.onPause = onPause;
+    this.onSelectUpgrade = onSelectUpgrade;
 
     this.keys = new Set();
     this.mouseNdc = new THREE.Vector2(0, 0);
@@ -21,21 +30,33 @@ export class HybridControls {
     this.aimPoint = new THREE.Vector3(0, 0, -7);
     this.aimDirection = new THREE.Vector3(0, 0, -1);
     this.jumpRequested = false;
+    this.primaryFireHeld = false;
 
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleKeyUp = this.handleKeyUp.bind(this);
     this.handleBlur = this.handleBlur.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
     this.handlePointerDown = this.handlePointerDown.bind(this);
+    this.handlePointerUp = this.handlePointerUp.bind(this);
 
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('blur', this.handleBlur);
+    window.addEventListener('pointerup', this.handlePointerUp);
+    window.addEventListener('pointercancel', this.handlePointerUp);
     element.addEventListener('pointermove', this.handlePointerMove);
     element.addEventListener('pointerdown', this.handlePointerDown);
   }
 
   handleKeyDown(event) {
+    if (event.code in UPGRADE_KEY_INDEX && !event.repeat) {
+      const handled = this.onSelectUpgrade?.(UPGRADE_KEY_INDEX[event.code]);
+      if (handled) {
+        event.preventDefault();
+        return;
+      }
+    }
+
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('button, input, textarea, select, [contenteditable="true"]')) {
       return;
@@ -75,6 +96,7 @@ export class HybridControls {
 
   handlePointerDown(event) {
     if (event.button !== 0) return;
+    this.primaryFireHeld = true;
     this.element.focus({ preventScroll: true });
     this.setPointer(event);
     this.updateAim();
@@ -82,6 +104,12 @@ export class HybridControls {
       direction: this.aimDirection.clone(),
       target: this.aimPoint.clone(),
     });
+  }
+
+  handlePointerUp(event) {
+    if (event.button === 0 || event.type === 'pointercancel') {
+      this.primaryFireHeld = false;
+    }
   }
 
   setPointer(event) {
@@ -120,6 +148,10 @@ export class HybridControls {
     return this.keys.has('Space');
   }
 
+  isPrimaryFireHeld() {
+    return this.primaryFireHeld;
+  }
+
   consumeJumpRequest() {
     const requested = this.jumpRequested;
     this.jumpRequested = false;
@@ -128,12 +160,15 @@ export class HybridControls {
 
   clearKeys() {
     this.keys.clear();
+    this.primaryFireHeld = false;
   }
 
   dispose() {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('blur', this.handleBlur);
+    window.removeEventListener('pointerup', this.handlePointerUp);
+    window.removeEventListener('pointercancel', this.handlePointerUp);
     this.element.removeEventListener('pointermove', this.handlePointerMove);
     this.element.removeEventListener('pointerdown', this.handlePointerDown);
     this.clearKeys();
