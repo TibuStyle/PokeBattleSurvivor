@@ -1,3 +1,4 @@
+import { EQUIP_ITEMS, getEquippedItemModifiers, rollNormalGacha, rollShinyGacha } from '../data/gddSystems.js';
 import { getUpgradeCost, PERMANENT_UPGRADES, RARITY_RATES } from '../data/economy.js';
 import { REGIONS, STARTERS } from '../data/regions.js';
 import { getStarterMoveset, STAB_MULTIPLIER, DAMAGE_SCALE } from '../data/moves.js';
@@ -43,6 +44,8 @@ export class MenuController {
     this.activeTab = 'regions';
     this.paused = false;
     this.levelUpChoices = null;
+    this.equippedItemId = 'restos';
+    this.lastGachaBanner = null;
     this.hudState = this.createDefaultHudState();
 
     this.handleClick = this.handleClick.bind(this);
@@ -486,9 +489,28 @@ export class MenuController {
         <h1>Gachapón</h1>
         <p>El gacha amplía tu Pokédex; no bloquea regiones ni vende poder. Las probabilidades son visibles antes de cada tirada.</p>
       </section>
+      ${this.lastGachaBanner ? `<p class="unlock-banner" role="status">${escapeHtml(this.lastGachaBanner)}</p>` : ''}
       <div class="gacha-layout">
-        <article class="gacha-panel gacha-panel--normal"><div class="gacha-panel__label">01 / GACHA NORMAL</div><div class="gacha-illustration">✳</div><h2>Encuentros regionales</h2><p>Usa tickets ganados jugando para desbloquear compañeros de la región ya descubierta.</p><div class="rarity-list">${RARITY_RATES.map((rarity) => `<div class="rarity-row"><span><i style="--rarity-color:${rarity.color}"></i>${rarity.label}</span><b>${rarity.percent}%</b></div>`).join('')}</div><div class="coming-soon">SISTEMA DE TIRADAS · SIGUIENTE FASE</div></article>
-        <article class="gacha-panel gacha-panel--shiny"><div class="gacha-panel__label">02 / GACHA SHINY</div><div class="gacha-illustration gacha-illustration--shiny">✦</div><h2>Variocolor</h2><p>Las gemas se reservarán para aspectos shiny de Pokémon que ya hayas desbloqueado; nunca alteran sus estadísticas.</p><div class="shiny-note"><span>◆</span><div><b>Solo cosmético</b><small>La especie debe estar ya en tu Pokédex.</small></div></div><div class="coming-soon">COSTE EN GEMAS · POR BALANCEAR</div></article>
+        <article class="gacha-panel gacha-panel--normal">
+          <div class="gacha-panel__label">01 / GACHA NORMAL</div>
+          <div class="gacha-illustration">✳</div>
+          <h2>Encuentros regionales</h2>
+          <p>Usa tickets ganados jugando y derrotando jefes para desbloquear nuevos Pokémon base.</p>
+          <div class="rarity-list">${RARITY_RATES.map((rarity) => `<div class="rarity-row"><span><i style="--rarity-color:${rarity.color}"></i>${rarity.label}</span><b>${rarity.percent}%</b></div>`).join('')}</div>
+          <button class="button button--primary" type="button" data-action="gacha-normal" ${tickets >= 1 ? '' : 'disabled'}>
+            ${tickets >= 1 ? 'Tirar Gachapón · 1 ▤ Ticket' : 'Sin Tickets (1 ▤ requerido)'}
+          </button>
+        </article>
+        <article class="gacha-panel gacha-panel--shiny">
+          <div class="gacha-panel__label">02 / GACHA SHINY</div>
+          <div class="gacha-illustration gacha-illustration--shiny">✦</div>
+          <h2>Variocolor</h2>
+          <p>Las gemas abren el Gachapón Exclusivo Shiny de Pokémon que ya hayas desbloqueado; posee el mismo sistema de rarezas.</p>
+          <div class="shiny-note"><span>◆</span><div><b>Prestigio estético</b><small>Solo otorga la Skin Shiny de especies ya registradas en tu Pokédex.</small></div></div>
+          <button class="button button--secondary" type="button" data-action="gacha-shiny" ${gems >= 3 ? '' : 'disabled'}>
+            ${gems >= 3 ? 'Tirar Shiny · 3 ✦ Gemas' : 'Necesitas 3 ✦ Gemas'}
+          </button>
+        </article>
       </div>
     `;
   }
@@ -553,6 +575,17 @@ export class MenuController {
         <section class="ready-layout">
           <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, usa los movimientos de ${escapeHtml(starter.name)}, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
             <div class="ready-objectives"><div><small>ENEMIGOS DETECTADOS</small><b>${region.enemies.map(escapeHtml).join(' · ')}</b></div><div><small>JEFE DE REGIÓN</small><b class="boss-text">${escapeHtml(region.boss)}</b></div></div>
+            <div class="ready-items" style="margin: 0.85rem 0;">
+              <small style="display:block;margin-bottom:0.4rem;opacity:0.8;">OBJETO DE EQUIPO (GDD)</small>
+              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                ${Object.values(EQUIP_ITEMS).map((item) => `
+                  <button type="button" class="button ${this.equippedItemId === item.id ? 'button--primary' : 'button--secondary'}" data-action="select-item" data-item-id="${item.id}" style="padding:0.4rem 0.75rem;font-size:0.82rem;">
+                    ${escapeHtml(item.name)}
+                  </button>
+                `).join('')}
+              </div>
+              <small style="display:block;margin-top:0.35rem;color:#c5ee88;">${escapeHtml(getEquippedItemModifiers(this.equippedItemId).description)}</small>
+            </div>
             <button class="button button--primary button--launch" data-action="enter-run">Entrar a la partida <span aria-hidden="true">↗</span></button>
             <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> relativo a cámara <span>·</span> clic + ratón mirar <span>·</span> <kbd>Q</kbd>/<kbd>SHIFT</kbd> desbloqueables <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
           </div>
@@ -777,12 +810,57 @@ export class MenuController {
         this.flow.chooseStarter(target.dataset.starterId);
         this.render();
         break;
+      case 'select-item': {
+        const itemId = target.dataset.itemId;
+        if (itemId && EQUIP_ITEMS[itemId]) {
+          this.equippedItemId = itemId;
+          this.render();
+        }
+        break;
+      }
+      case 'gacha-normal': {
+        if (this.flow.profile.resources.tickets < 1) {
+          this.showError('Necesitas 1 Ticket para tirar en el Gachapón Normal.');
+          break;
+        }
+        this.flow.profile.resources.tickets -= 1;
+        const reward = rollNormalGacha();
+        const alreadyUnlocked = this.flow.profile.unlockedPokemon.includes(reward.id);
+        if (!alreadyUnlocked) {
+          this.flow.profile.unlockedPokemon.push(reward.id);
+          this.lastGachaBanner = `¡Nuevo Pokémon reclutado: ${reward.name} (${reward.rarity.toUpperCase()})!`;
+        } else {
+          this.flow.profile.resources.coins += 15;
+          this.lastGachaBanner = `${reward.name} repetido · Convertido en +15 Monedas.`;
+        }
+        this.flow.store.save(this.flow.profile);
+        this.render();
+        break;
+      }
+      case 'gacha-shiny': {
+        if (this.flow.profile.resources.gems < 3) {
+          this.showError('Necesitas 3 Gemas para abrir el Gachapón Shiny.');
+          break;
+        }
+        const shiny = rollShinyGacha(this.flow.profile.unlockedPokemon);
+        if (!shiny) {
+          this.showError('Recluta primero algún Pokémon del pool en el Gachapón Normal.');
+          break;
+        }
+        this.flow.profile.resources.gems -= 3;
+        this.lastGachaBanner = `✨ ¡Aspecto SHINY Variocolor desbloqueado para ${shiny.name}!`;
+        this.flow.store.save(this.flow.profile);
+        this.render();
+        break;
+      }
       case 'enter-run': {
         const runConfig = this.flow.enterRun();
         if (!runConfig) {
           this.render();
           break;
         }
+        runConfig.equippedItemId = this.equippedItemId;
+        runConfig.equippedItem = getEquippedItemModifiers(this.equippedItemId);
         this.paused = false;
         this.levelUpChoices = null;
         this.hudState = this.createDefaultHudState();
