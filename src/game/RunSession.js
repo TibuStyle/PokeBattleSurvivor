@@ -11,6 +11,7 @@ import {
 import { DAMAGE_SCALE, STAB_MULTIPLIER, getStarterMoveset } from '../data/moves.js';
 import { describeEffectiveness, getTypeMultiplier } from '../data/typeChart.js';
 import { DEFAULT_AIM, normalizeDirection, resolveAttackShape } from './attacks.js';
+import { forwardFromYaw, smoothYaw } from './cameraRig.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -71,13 +72,15 @@ export class RunSession {
     this.attackSeq = 0;
 
     this.runUpgrades = {};
+    this.unlockedSkills = { special: false, dash: false };
     this.stats = this.computeStats();
 
     this.player = {
       x: 0,
       z: 0,
       height: 0,
-      rotationY: 0,
+      rotationY: Math.PI,
+      rotationTargetY: Math.PI,
       hp: this.stats.maxHp,
       maxHp: this.stats.maxHp,
       radius: BASE_PLAYER_STATS.playerRadius,
@@ -134,6 +137,9 @@ export class RunSession {
     const cadenceRank = inRun.attackCadence ?? 0;
     const prismRank = inRun.attackPrism ?? 0;
     const waveRank = inRun.attackWave ?? 0;
+    const specialPowerRank = inRun.specialPower ?? 0;
+    const specialRangeRank = inRun.specialRange ?? 0;
+    const specialCadenceRank = inRun.specialCadence ?? 0;
     const vitalityRank = inRun.vitalityBoost ?? 0;
     const agileRank = inRun.agileStep ?? 0;
     const magnetRank = inRun.auraMagnet ?? 0;
@@ -152,10 +158,26 @@ export class RunSession {
     const xpMultiplier = (1 + permXpRank * 0.02) * (1 + magnetRank * 0.15);
 
     const cadenceFactor = Math.max(0.28, (1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank));
+    const specialCadenceFactor = Math.max(0.28, cadenceFactor * Math.pow(0.88, specialCadenceRank));
     const dashCooldown = BASE_PLAYER_STATS.dashCooldownSeconds * Math.pow(0.8, dashRank);
     const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
 
-    const modifiers = { powerRank, prismRank, waveRank, cadenceFactor };
+    const sharedModifiers = { powerRank, prismRank, waveRank, cadenceFactor };
+    const specialModifiers = this.unlockedSkills.special
+      ? {
+          ...sharedModifiers,
+          cadenceFactor: specialCadenceFactor,
+          powerMultiplier: 1 + specialPowerRank * 0.25,
+          rangeMultiplier: 1 + specialRangeRank * 0.15,
+        }
+      : {
+          powerRank: 0,
+          prismRank: 0,
+          waveRank: 0,
+          cadenceFactor: 1,
+          powerMultiplier: 1,
+          rangeMultiplier: 1,
+        };
 
     return {
       maxHp,
@@ -170,18 +192,25 @@ export class RunSession {
         invulnerability: BASE_PLAYER_STATS.dashInvulnerabilitySeconds,
       },
       moves: {
-        basic: this.#deriveAttack(this.moveset.basic, modifiers),
-        special: this.#deriveAttack(this.moveset.special, modifiers),
+        basic: this.#deriveAttack(this.moveset.basic, sharedModifiers),
+        special: this.#deriveAttack(this.moveset.special, specialModifiers),
       },
     };
   }
 
-  #deriveAttack(move, { powerRank, prismRank, waveRank, cadenceFactor }) {
+  #deriveAttack(move, {
+    powerRank,
+    prismRank,
+    waveRank,
+    cadenceFactor,
+    powerMultiplier = 1,
+    rangeMultiplier = 1,
+  }) {
     return {
       id: move.id,
-      power: move.power * DAMAGE_SCALE * (1 + powerRank * 0.25),
+      power: move.power * DAMAGE_SCALE * (1 + powerRank * 0.25) * powerMultiplier,
       cooldown: Number((move.cooldown * cadenceFactor).toFixed(3)),
-      range: Number(((move.range ?? 0) * (1 + prismRank * 0.12)).toFixed(2)),
+      range: Number(((move.range ?? 0) * (1 + prismRank * 0.12) * rangeMultiplier).toFixed(2)),
       width: Number(((move.width ?? 0.6) * (1 + waveRank * 0.25)).toFixed(2)),
       knockback: Number(((move.knockback ?? 1) * (1 + waveRank * 0.35)).toFixed(2)),
       pierce: (move.pierce ?? 1) + powerRank,
@@ -189,7 +218,7 @@ export class RunSession {
       spreadRadians: 0.18,
       arc: Number(((move.arc ?? 0.9) * (1 + prismRank * 0.08)).toFixed(3)),
       maxTargets: (move.maxTargets ?? 4) + powerRank,
-      radius: Number(((move.radius ?? 2.5) * (1 + prismRank * 0.1)).toFixed(2)),
+      radius: Number(((move.radius ?? 2.5) * (1 + prismRank * 0.1) * rangeMultiplier).toFixed(2)),
     };
   }
 
@@ -417,6 +446,12 @@ export class RunSession {
     if (this.status !== 'running' || !this.player.alive) {
       return this.#emptyAttack(slot, 'not-running');
     }
+    if (slot === 'special' && !this.unlockedSkills.special) {
+      return this.#emptyAttack(slot, 'locked');
+    }
+    if (!this.moveset[slot] || !this.stats.moves[slot]) {
+      return this.#emptyAttack(slot, 'unknown-slot');
+    }
     if (!force && this.cooldowns[slot] > 0) {
       return this.#emptyAttack(slot, 'cooldown', this.cooldowns[slot]);
     }
@@ -425,7 +460,8 @@ export class RunSession {
     const derived = this.stats.moves[slot];
     const dir = normalizeDirection(direction);
 
-    this.player.rotationY = Math.atan2(dir.x, dir.z);
+    // Se actualiza el destino de giro; la orientación visible se interpola en update().
+    this.player.rotationTargetY = Math.atan2(dir.x, dir.z);
     this.cooldowns[slot] = derived.cooldown;
 
     const attackerTypes = this.runConfig.starter.types;
@@ -565,6 +601,7 @@ export class RunSession {
 
   dash(direction = { x: 0, z: 0 }) {
     if (this.status !== 'running' || !this.player.alive) return { ok: false, reason: 'not-running' };
+    if (!this.unlockedSkills.dash) return { ok: false, reason: 'locked' };
     if (this.player.dashCooldown > 0 || this.player.dashTimer > 0) return { ok: false, reason: 'cooldown' };
 
     let dx = Number(direction.x) || 0;
@@ -581,6 +618,7 @@ export class RunSession {
 
     this.player.dashDirX = dx;
     this.player.dashDirZ = dz;
+    this.player.rotationTargetY = Math.atan2(dx, dz);
     this.player.dashTimer = this.stats.dash.duration;
     this.player.dashCooldown = this.stats.dash.cooldown;
     this.player.invulnerableTimer = Math.max(
@@ -678,19 +716,29 @@ export class RunSession {
     return { gained, levelsGained, level: this.level, xp: this.xp, xpToNext: this.xpToNext };
   }
 
-  rollUpgradeChoices(count = 3) {
-    const available = RUN_UPGRADES.filter((upgrade) => {
-      const currentRank = this.runUpgrades[upgrade.id] ?? 0;
-      return currentRank < upgrade.maxRank;
-    });
+  #isUpgradeAvailable(upgrade) {
+    const currentRank = this.runUpgrades[upgrade.id] ?? 0;
+    if (currentRank >= upgrade.maxRank) return false;
+    if (upgrade.unlockSkill && this.unlockedSkills[upgrade.unlockSkill]) return false;
+    if (upgrade.requiresSkill && !this.unlockedSkills[upgrade.requiresSkill]) return false;
+    return true;
+  }
 
-    const pool = [...available];
+  rollUpgradeChoices(count = 3) {
+    const choiceCount = Math.max(1, Math.floor(Number(count) || 3));
+    const available = RUN_UPGRADES.filter((upgrade) => this.#isUpgradeAvailable(upgrade));
+
+    // Presenta siempre como opción las habilidades aún bloqueadas. Así Q y Shift no
+    // dependen de una tirada afortunada; siguen siendo tres tarjetas y solo se elige una.
+    const unlocks = available.filter((upgrade) => upgrade.unlockSkill).slice(0, choiceCount);
+    const unlockIds = new Set(unlocks.map((upgrade) => upgrade.id));
+    const pool = available.filter((upgrade) => !unlockIds.has(upgrade.id));
     for (let i = pool.length - 1; i > 0; i -= 1) {
       const j = Math.floor(this.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
 
-    return pool.slice(0, Math.max(1, count)).map((upgrade) => {
+    return [...unlocks, ...pool.slice(0, Math.max(0, choiceCount - unlocks.length))].map((upgrade) => {
       const currentRank = this.runUpgrades[upgrade.id] ?? 0;
       return {
         id: upgrade.id,
@@ -701,6 +749,7 @@ export class RunSession {
         currentRank,
         nextRank: currentRank + 1,
         maxRank: upgrade.maxRank,
+        unlockSkill: upgrade.unlockSkill ?? null,
       };
     });
   }
@@ -724,6 +773,8 @@ export class RunSession {
     const previousMaxHp = this.stats.maxHp;
     const nextRank = (this.runUpgrades[chosen.id] ?? 0) + 1;
     this.runUpgrades[chosen.id] = nextRank;
+    if (chosen.unlockSkill) this.unlockedSkills[chosen.unlockSkill] = true;
+    if (chosen.unlockSkill === 'special') this.cooldowns.special = 0;
     this.stats = this.computeStats();
 
     if (chosen.id === 'vitalityBoost') {
@@ -771,6 +822,7 @@ export class RunSession {
       orbsPicked: [],
       playerDamaged: null,
       playerDashed: null,
+      dashRejected: null,
       specialRejected: null,
       leveledUp: false,
       miniBossSpawned: null,
@@ -815,6 +867,7 @@ export class RunSession {
     if (input.dashPressed) {
       const dashResult = this.dash(input.movement);
       if (dashResult.ok) events.playerDashed = dashResult;
+      else events.dashRejected = { reason: dashResult.reason };
     }
 
     // Movimiento del jugador
@@ -832,15 +885,14 @@ export class RunSession {
       this.player.height = Math.max(0, input.height);
     }
 
-    if (input.aimDirection) {
-      const ax = Number(input.aimDirection.x) || 0;
-      const az = Number(input.aimDirection.z) || 0;
-      if (ax * ax + az * az > 0.0001) {
-        this.player.rotationY = Math.atan2(ax, az);
-      }
-    }
-
-    const aim = input.aimDirection ?? { x: Math.sin(this.player.rotationY), z: Math.cos(this.player.rotationY) };
+    const aim = normalizeDirection(
+      input.aimDirection ?? forwardFromYaw(this.player.rotationY),
+    );
+    const facing = moveLen > 0.0001
+      ? normalizeDirection({ x: moveX, z: moveZ })
+      : aim;
+    this.player.rotationTargetY = Math.atan2(facing.x, facing.z);
+    this.player.rotationY = smoothYaw(this.player.rotationY, this.player.rotationTargetY, dt);
 
     // Especial (Q): solo si su enfriamiento ha terminado
     if (input.specialPressed) {
@@ -1039,7 +1091,8 @@ export class RunSession {
       range: derived.range,
       cooldown: derived.cooldown,
       cooldownRemaining: Number(this.cooldowns[slot].toFixed(2)),
-      ready: this.cooldowns[slot] <= 0,
+      unlocked: slot === 'basic' || Boolean(this.unlockedSkills[slot]),
+      ready: (slot === 'basic' || Boolean(this.unlockedSkills[slot])) && this.cooldowns[slot] <= 0,
     };
   }
 
@@ -1073,6 +1126,7 @@ export class RunSession {
       activeEnemies: this.enemies.length,
       basicAttack: this.#attackSnapshot('basic'),
       specialAttack: this.#attackSnapshot('special'),
+      unlockedSkills: { ...this.unlockedSkills },
       lastAttackSeq: this.attackSeq,
       lastAttack: last
         ? {
@@ -1085,8 +1139,9 @@ export class RunSession {
             hitCount: last.hitCount,
           }
         : null,
+      dashUnlocked: this.unlockedSkills.dash,
       dashCooldown: this.player.dashCooldown,
-      dashReady: this.player.dashCooldown <= 0 && this.player.dashTimer <= 0,
+      dashReady: this.unlockedSkills.dash && this.player.dashCooldown <= 0 && this.player.dashTimer <= 0,
       activeUpgrades,
       pendingChoices: this.pendingChoices ? [...this.pendingChoices] : null,
       miniBoss: miniBoss

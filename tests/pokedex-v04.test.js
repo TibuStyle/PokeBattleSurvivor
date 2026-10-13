@@ -83,6 +83,37 @@ describe('v0.4 Pokédex: movimientos solo para compañeros desbloqueados', () =>
   });
 });
 
+describe('v0.5 interfaz: guía, habilidades y selección', () => {
+  it('la selección y la Guía indican el bloqueo inicial de Q y Shift', () => {
+    const flow = createFlow();
+    flow.selectRegion('kanto');
+    const { menu, root } = createMenu(flow);
+    menu.render();
+    assert.ok(root.innerHTML.includes('ataque básico automático'));
+    assert.ok(root.innerHTML.includes('Bloqueado'));
+    assert.ok(root.innerHTML.includes('SHIFT'));
+
+    menu.activeTab = 'guide';
+    flow.returnToHub();
+    menu.render();
+    assert.ok(root.innerHTML.includes('Pointer Lock'));
+    assert.ok(root.innerHTML.includes('mouse-sensitivity'));
+    assert.ok(root.innerHTML.includes('Q') && root.innerHTML.includes('Shift'));
+  });
+
+  it('el HUD señala las habilidades bloqueadas y ofrece una ayuda de captura de ratón', () => {
+    const flow = createFlow();
+    flow.selectRegion('kanto');
+    flow.chooseStarter('charmander');
+    flow.enterRun();
+    const { menu, root } = createMenu(flow);
+    menu.render();
+    assert.ok(root.innerHTML.includes('BLOQUEADO'));
+    assert.ok(root.innerHTML.includes('BLOQUEADA · SUBE NV.'));
+    assert.ok(root.innerHTML.includes('pointer-lock-hint'));
+  });
+});
+
 describe('v0.4 interfaz: pantallas de elección y región', () => {
   it('la selección de inicial muestra los movimientos de cada compañero sin fallar', () => {
     const flow = createFlow();
@@ -106,9 +137,9 @@ describe('v0.4 interfaz: pantallas de elección y región', () => {
     assert.ok(root.innerHTML.includes('Lanzallamas'));
   });
 
-  it('el hub muestra la versión 0.4 en el pie', () => {
+  it('el hub muestra la versión 0.5 en el pie', () => {
     const { menu, root } = createMenu();
     menu.render();
-    assert.ok(root.innerHTML.includes('PROTOTIPO 0.4'));
+    assert.ok(root.innerHTML.includes('PROTOTIPO 0.5'));
   });
 });

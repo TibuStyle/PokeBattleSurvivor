@@ -1,8 +1,8 @@
 # PokeBattle Survivor — prototipo 3D
 
-Un action roguelite de hordas en navegador al estilo *Vampire Survivors*. El vertical slice actual (v0.4) incluye **flujo de región → inicial → partida**, movimientos propios de cada inicial con **disparo automático** y **especial con `Q`** (con enfriamiento visible), efectividad de tipos y STAB, cámara de tercera persona, hordas con enemigos élite, un centinela a los 4 minutos, jefe regional a los ~10 minutos, orbes de XP, elección de 1 entre 3 mejoras por nivel, esquiva (`Shift`) y retirada táctica.
+Un action roguelite de hordas en navegador al estilo *Vampire Survivors*. El vertical slice actual (v0.5) conserva región → inicial → partida, movimientos propios, combate por tipos, hordas y progresión. La cámara de tercera persona usa **Pointer Lock** y WASD relativo a cámara; al empezar solo está disponible el ataque básico. El especial (`Q`) y la esquiva (`Shift`) se desbloquean eligiendo una de tres mejoras al subir de nivel y después reciben mejoras propias.
 
-> La escena usa criaturas geométricas originales como placeholder; no incluye modelos ni texturas extraídas de Pokémon.
+> Los acompañantes y enemigos de la escena son formas geométricas procedurales originales. No se incorporan modelos GLB/GLTF, texturas ni extracciones de juegos.
 
 ## Ejecutar en local
 
@@ -26,17 +26,17 @@ npm run preview
 - Mapa inicial con Kanto disponible y Johto/Hoenn bloqueados.
 - Selección gratuita de un inicial la primera vez que se abre cada región; la elección queda guardada en `localStorage` y no se puede volver a reclamar como gratuita.
 - Flujo independiente del render: elegir región → elegir inicial → entrar a partida → informe de expedición.
-- Escena Three.js con cámara de **tercera persona baja y detrás del compañero**, bosque procedural, compañero geométrico, hordas regionales y orbes de experiencia 3D.
-- `WASD` o flechas para moverse **según la cámara** (`W` avanza hacia donde mira la cámara), ratón para apuntar sobre el suelo 3D, **disparo automático** del básico, `Q` para lanzar el **especial** (enfriamiento visible en el panel), `Shift` para **esquivar** (con invulnerabilidad breve), `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
-- Movimientos propios de los nueve iniciales (p. ej. Charmander: **Ascuas** automática y **Lanzallamas** en `Q`). Tres formas de ataque: **haz** perforante, **abanico** de varios objetivos y **área** alrededor del compañero.
-- Tabla de tipos de 18 tipos: ×2, ×0,5 y ×0 (inmunidad), dobles tipos multiplicados y **STAB ×1,5** cuando el movimiento coincide con un tipo del compañero. El HUD muestra la eficacia del último golpe.
-- Pokédex por región con los movimientos, la cobertura súper eficaz y la descripción de cada compañero (solo si está desbloqueado).
-- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`, con tipos propios), **enemigos élite** con auras (Celeridad/Masa/Furia) desde la oleada 3, un **centinela regional** a los 4 minutos como hito y el **jefe regional** (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`) tras derrotar al centinela.
-- Sistema de vida (`PS`) con ventana de gracia tras recibir contacto, **retiro táctico** con botín parcial desde la pausa y pantalla de resultados con recompensas reales (monedas, tickets y gemas).
-- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Ofensivo`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`, **Impulso Etéreo** para la esquiva).
-- Pokédex de los nueve iniciales regionales, pantalla de mejoras permanentes conectada a las estadísticas de combate y escaparate del gachapón con las probabilidades del GDD.
+- Escena Three.js con cámara de **tercera persona detrás del compañero**, bosque procedural, familiar elemental geométrico original, hordas regionales y orbes de experiencia 3D.
+- `WASD` o flechas se mueven **según el yaw de cámara**. Haz clic en el campo para capturar el ratón con **Pointer Lock**; el ratón gira yaw/pitch de la cámara y el Pokémon orienta su cuerpo suavemente hacia el movimiento o el ataque. La sensibilidad ajustable se guarda localmente y también aparece en pausa.
+- Al empezar solo está disponible el **ataque básico automático**. `Q` y `Shift` quedan bloqueados hasta elegir **Despertar especial** o **Despertar de esquiva** al subir de nivel; los bloqueos se ven en HUD, selección y guía, y no se pueden activar por teclado ni por API antes de desbloquearlos.
+- Las elecciones de nivel conservan **tres opciones únicas**. Tras desbloquear el especial, aparecen mejoras dedicadas de **daño**, **alcance** y **enfriamiento**; la esquiva puede mejorar distancia y enfriamiento. `1-3` selecciona una carta.
+- Movimientos propios de los nueve iniciales (p. ej. Charmander: **Ascuas** automática y **Lanzallamas** desbloqueable en `Q`). Tres formas de ataque: **haz** perforante, **abanico** y **área**.
+- Tabla de tipos de 18 tipos: ×2, ×0,5 y ×0 (inmunidad), efectividad doble multiplicada y **STAB ×1,5**. El HUD informa daño, enfriamientos y eficacia del último golpe.
+- Nueva **Guía de campo** con controles, estados de desbloqueo y sensibilidad; Pokédex regional con movimientos, formas, estadísticas, cobertura potencial y registro de cada compañero.
+- Hordas por oleadas con especies y tipos regionales, **enemigos élite** con auras, un **centinela regional** a los 4 minutos y el **jefe regional** al cumplir las condiciones de expedición.
+- Sistema de vida (`PS`), ventana de gracia, retirada táctica, resultados/recompensas, orbes de XP, mejoras permanentes, regiones y escaparate del gachapón.
 - Persistencia local con normalización defensiva del perfil y notas de versión en [`PATCH_NOTES.md`](./PATCH_NOTES.md).
-- Pruebas de Node para flujo regional, hordas, movimientos y daño (STAB, efectividad, formas de ataque), tabla de tipos, especial con enfriamiento, cámara, vida, orbes de XP, elección de mejoras y Pokédex.
+- Pruebas de Node para flujo regional, hordas, combate, desbloqueos y mejoras de habilidades, cámara/mouse look, Pokédex e interfaz.
 - Build estático de Vite preparado para publicarse en GitHub Pages.
 
 ## Arquitectura
@@ -58,11 +58,11 @@ src/
   menu/
     MenuController.js        # mapa, Pokédex, mejoras, gacha, HUD, centinela/jefe y modal de nivel
   game/
-    RunSession.js            # simulación pura v0.4: hordas, ataques, STAB, efectividad, élites, centinela, dash, PS, XP y mejoras
+    RunSession.js            # simulación pura: hordas, habilidades bloqueadas, desbloqueos, combate y mejoras
     attacks.js               # geometría pura de haces, abanicos y áreas
-    cameraRig.js             # cámara de tercera persona y movimiento relativo a la cámara (sin Three.js)
-    GameApp.js               # escena Three.js, loop, cámara, enemigos, orbes, auras y efectos
-    HybridControls.js        # teclado, raycast del ratón, salto, esquiva (Shift), especial (Q), pausa y atajos 1-3
+    cameraRig.js             # cámara, Pointer Lock, sensibilidad y movimiento relativo (sin Three.js)
+    GameApp.js               # escena Three.js, modelos procedurales, loop, cámara, enemigos y efectos
+    HybridControls.js        # WASD, Pointer Lock, salto, habilidades desbloqueables y atajos 1-3
 tests/
   region-flow.test.js
   combat-v02.test.js
@@ -72,6 +72,7 @@ tests/
   attacks-v04.test.js
   camera-v04.test.js
   pokedex-v04.test.js
+  skills-v05.test.js
 ```
 
 **Regla de dependencia:** el menú no importa Three.js. `RegionFlow` devuelve un `runConfig` serializable; `GameApp` consume esa configuración. Así se puede sustituir el motor o probar el flujo en Node sin abrir WebGL.
@@ -94,13 +95,11 @@ flow.completeRun({
 
 `completeRun()` es el punto donde una victoria marca la región y abre la siguiente. La recompensa por derrota y extracción aún necesita una decisión de diseño; por ahora no se finge que el prototipo ya la calcule.
 
-### Controles híbridos
+### Controles de tercera persona (v0.5)
 
-`HybridControls` convierte la posición de pantalla del cursor a coordenadas normalizadas, lanza un rayo desde la cámara y busca su intersección con el plano `y = 0`. La diferencia entre ese punto y la posición del jugador produce la dirección horizontal de apuntado, que define hacia dónde disparan los movimientos.
+`HybridControls` solicita Pointer Lock con un clic en el lienzo y consume `movementX/movementY` para girar el yaw/pitch de cámara; `Esc` libera el puntero y pausa. El yaw transforma WASD a movimiento de mundo. El ataque apunta hacia la proyección horizontal de la cámara, mientras que `RunSession` interpola el yaw del compañero hacia el movimiento o el ataque con el arco angular más corto. Por eso el ratón no impone una rotación instantánea del modelo.
 
-### Cámara de tercera persona (v0.4)
-
-La cámara va detrás y algo por encima del compañero (distancia ~7,4, altura ~2,35) y mira ~2,6 m por delante, a la altura del torso. Se suaviza con `smoothing` y sube levemente al saltar. El yaw de la cámara sigue al apuntado **solo mientras el cursor se mueve** y fuera de una zona muerta de ~18°. Si siguiera al apuntado en todo momento, un cursor fijo fuera del centro haría girar la cámara sin parar, porque el apuntado gira con ella. Todos los parámetros están en `src/game/cameraRig.js` (`CAMERA_RIG`).
+La cámara permanece detrás del compañero y sigue su posición con amortiguación. `MOUSE_LOOK` define la sensibilidad base y sus límites; un multiplicador de usuario (0,4×–2,4×) se guarda localmente y puede ajustarse antes de la partida o desde el menú de pausa. Geometría, inclinación y suavizado viven en `src/game/cameraRig.js` (`CAMERA_RIG`).
 
 ### Movimientos y daño (v0.4)
 
@@ -114,8 +113,9 @@ daño = round(potencia × 0,5 × (1 + 0,25 × rango de poder) × STAB × efectiv
 - **Efectividad** según la tabla de tipos (`typeChart.js`): ×2, ×0,5 o ×0. Un enemigo inmune no participa en el ataque.
 - **Repetición ×0,5** si un haz perforante vuelve a golpear al mismo enemigo.
 - **Formas**: `beam` (haz perforante), `cone` (abanico que alcanza hasta `maxTargets`) y `burst` (área alrededor del compañero).
-
-El básico se dispara solo; el especial se lanza con `Q` y tiene su propio enfriamiento, que se muestra en el panel del HUD.
+- El básico automático está activo desde el inicio. Especial y esquiva se guardan como habilidades de la partida; Q/Shift y sus llamadas de simulación se rechazan hasta elegir el desbloqueo en una subida de nivel.
+- Tras abrir el especial aparecen opciones específicas de +25% de daño, +15% de alcance y −12% de enfriamiento por rango. La mejora de esquiva amplía su distancia y reduce su enfriamiento.
+- Cada subida mantiene tres cartas distintas; los desbloqueos pendientes se priorizan para aparecer siempre entre las opciones.
 
 ## Análisis de diseño y mejoras sugeridas
 
@@ -159,25 +159,13 @@ El sitio de referencia funciona bien como acceso rápido a una partida, catálog
 
 Referencia analizada: [guía pública de PokéSurvivor](https://pokesurvivor.com/en/guide/) y [Pokédex por regiones](https://pokesurvivor.com/en/pokedex/).
 
-## Recursos y licencias de assets
+## Modelos y licencias de assets
 
-### Para un prototipo comercialmente más seguro
+La versión actual no incluye archivos GLB/GLTF ni texturas de terceros. No añadí modelos descargados porque no confirmé una licencia concreta que permita incorporar y redistribuir en este repositorio modelos de criaturas reconocibles. En su lugar, la escena combina primitivas y geometría procedural original en `src/game/GameApp.js`; no se copiaron assets de PokéSurvivor ni de juegos comerciales y no hay atribuciones de terceros pendientes. El inventario está en [`ASSET_LICENSES.md`](./ASSET_LICENSES.md).
 
-- [Kenney Assets](https://kenney.nl/assets): paquetes para UI, prototipos y props; comprueba la licencia indicada en cada paquete (muchos son CC0).
-- [Quaternius](https://quaternius.com/assets.html): modelos low-poly y packs de entorno publicados como CC0 según su catálogo.
-- [Poly Haven](https://polyhaven.com/): modelos, HDRI y texturas CC0; especialmente útil para el bosque, rocas, suelo y props, no para criaturas Pokémon.
-- [Sketchfab](https://sketchfab.com/): catálogo grande, pero la licencia se define **por modelo**; filtra y revisa atribución, uso comercial y redistribución antes de descargar.
+Esta decisión evita atribuir una licencia que no se ha verificado, pero no otorga permisos sobre los nombres, diseños o marcas de Pokémon que ya aparecen en el prototipo. Para una publicación pública/comercial habría que obtener las licencias correspondientes o reemplazar también esos elementos por criaturas y nombres propios.
 
-### Para datos o inspiración fan
-
-- [PokeAPI en GitHub](https://github.com/PokeAPI) y su [repositorio de datos](https://github.com/PokeAPI/api-data): datos estructurados para prototipos y búsquedas; no son un permiso para redistribuir personajes, marcas o artwork oficial.
-- [The Models Resource](https://www.models-resource.com/): puede servir para investigación de formatos y referencia de modelos de juegos. No asumir que un archivo descargable tiene licencia para publicarlo en un juego o en GitHub Pages; muchos recursos de esa clase son extracciones de juegos comerciales.
-
-**Aviso de IP:** Pokémon, sus nombres, personajes, marcas y assets oficiales pertenecen a sus titulares. Que un proyecto sea gratuito o se etiquete como fan game no equivale a una licencia de redistribución. Para un lanzamiento público/comercial, la opción más segura es reemplazarlos por criaturas, nombres y siluetas originales, o conseguir permisos/licencias explícitos. El prototipo actual no empaqueta modelos ni artwork de Pokémon.
-
-### Formato recomendado
-
-Para WebGL usa GLB/glTF, una textura atlas por criatura cuando sea posible, rigs sencillos y LOD para jefes/enemigos. Guarda un `ASSET_LICENSES.md` con autor, URL, licencia, atribución requerida y fecha de descarga de cada asset que incorpores. Para una primera prueba de rendimiento, apunta a modelos estilizados de bajo recuento de polígonos y limita el tamaño de texturas.
+Si se incorporan modelos en el futuro, cada archivo deberá incluir en `ASSET_LICENSES.md` autor, URL de origen, licencia, atribución requerida y fecha de descarga, y la licencia deberá permitir expresamente redistribución dentro del juego/repo.
 
 ## GitHub Pages
 

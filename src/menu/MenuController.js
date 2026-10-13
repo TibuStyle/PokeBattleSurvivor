@@ -2,6 +2,7 @@ import { getUpgradeCost, PERMANENT_UPGRADES, RARITY_RATES } from '../data/econom
 import { REGIONS, STARTERS } from '../data/regions.js';
 import { getStarterMoveset, STAB_MULTIPLIER, DAMAGE_SCALE } from '../data/moves.js';
 import { describeEffectiveness, getSuperEffectiveTargets, getTypeColor } from '../data/typeChart.js';
+import { MOUSE_LOOK, normalizeSensitivity } from '../game/cameraRig.js';
 
 const pad2 = (value) => String(value).padStart(2, '0');
 const SHAPE_LABELS = { beam: 'Haz', cone: 'Abanico', burst: 'Área' };
@@ -25,6 +26,7 @@ export class MenuController {
       onResume = () => {},
       onChooseRunUpgrade = () => {},
       onExtractRun = () => {},
+      onMouseSensitivityChange = () => {},
     } = {},
   ) {
     this.root = root;
@@ -35,13 +37,18 @@ export class MenuController {
     this.onResume = onResume;
     this.onChooseRunUpgrade = onChooseRunUpgrade;
     this.onExtractRun = onExtractRun;
+    this.onMouseSensitivityChange = onMouseSensitivityChange;
+    this.mouseSensitivity = this.loadMouseSensitivity();
+    this.pointerLocked = false;
     this.activeTab = 'regions';
     this.paused = false;
     this.levelUpChoices = null;
     this.hudState = this.createDefaultHudState();
 
     this.handleClick = this.handleClick.bind(this);
+    this.handleInput = this.handleInput.bind(this);
     this.root.addEventListener('click', this.handleClick);
+    this.root.addEventListener('input', this.handleInput);
     this.render();
   }
 
@@ -61,9 +68,11 @@ export class MenuController {
       activeEnemies: 0,
       basicAttack: null,
       specialAttack: null,
+      unlockedSkills: { special: false, dash: false },
       lastAttack: null,
       lastAttackSeq: 0,
-      dashReady: true,
+      dashUnlocked: false,
+      dashReady: false,
       dashCooldown: 0,
       activeUpgrades: [],
       pendingChoices: null,
@@ -106,6 +115,7 @@ export class MenuController {
           </button>
           <nav class="main-nav" aria-label="Menú principal">
             ${this.navButton('regions', 'Regiones')}
+            ${this.navButton('guide', 'Guía')}
             ${this.navButton('pokedex', 'Pokédex')}
             ${this.navButton('upgrades', 'Mejoras')}
             ${this.navButton('gacha', 'Gachapón')}
@@ -118,7 +128,7 @@ export class MenuController {
         </header>
         <main class="hub-content">
           ${this.renderHubTab()}
-          <footer class="hub-footer"><span>PROTOTIPO 0.4</span><span>Partida local · progreso guardado en este navegador</span></footer>
+          <footer class="hub-footer"><span>PROTOTIPO 0.5</span><span>Partida local · progreso guardado en este navegador</span></footer>
         </main>
       </div>
     `;
@@ -129,10 +139,90 @@ export class MenuController {
   }
 
   renderHubTab() {
+    if (this.activeTab === 'guide') return this.renderGuide();
     if (this.activeTab === 'pokedex') return this.renderPokedex();
     if (this.activeTab === 'upgrades') return this.renderUpgrades();
     if (this.activeTab === 'gacha') return this.renderGacha();
     return this.renderRegions();
+  }
+
+  renderGuide() {
+    return `
+      <section class="page-heading page-heading--compact">
+        <span class="eyebrow">GUÍA DE CAMPO · CONTROLES Y PROGRESIÓN</span>
+        <h1>Cómo jugar</h1>
+        <p>Supervive, recoge experiencia y decide cuándo invertir cada subida de nivel. Las habilidades nuevas no están activas desde el inicio: primero tendrás que desbloquearlas.</p>
+      </section>
+      <div class="guide-layout">
+        <section class="guide-panel guide-panel--steps" aria-label="Controles y progreso">
+          <article class="guide-step"><span>01</span><div><h2>Mueve y mira</h2><p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> se orientan según la cámara. Haz clic en la arena para capturar el ratón (Pointer Lock); muévelo para girar la cámara detrás del compañero. <kbd>Esc</kbd> libera el ratón y pausa.</p></div></article>
+          <article class="guide-step"><span>02</span><div><h2>Empieza con lo básico</h2><p>El ataque básico de tu inicial se dispara automáticamente. El especial <kbd>Q</kbd> y la esquiva <kbd>Shift</kbd> empiezan bloqueados: no se activan hasta elegir su desbloqueo al subir de nivel.</p></div></article>
+          <article class="guide-step"><span>03</span><div><h2>Elige una de tres</h2><p>Cada nivel pausa la partida y ofrece tres mejoras distintas. Mientras estén bloqueadas, Q y Shift aparecen marcados en el HUD y sus desbloqueos se incluyen entre las opciones. Luego podrás mejorar el daño, el alcance o el enfriamiento del especial y la distancia/enfriamiento de la esquiva.</p></div></article>
+          <article class="guide-step"><span>04</span><div><h2>Lee los tipos</h2><p>El STAB aumenta el daño cuando el movimiento comparte tipo con el compañero. La Pokédex muestra los movimientos, su forma, alcance y cobertura potencial por región.</p></div></article>
+        </section>
+        <aside class="guide-panel guide-settings">
+          <span class="eyebrow">AJUSTES DE CONTROL</span>
+          <h2>Sensibilidad de cámara</h2>
+          <p>Ajusta cuánto gira la cámara por cada movimiento del ratón. El cambio se aplica al instante y se guarda en este navegador.</p>
+          ${this.renderSensitivityControl('guide')}
+          <div class="guide-tip"><b>Consejo</b><span>Si la cámara no se mueve, haz clic en el campo para volver a capturar el ratón.</span></div>
+        </aside>
+      </div>
+    `;
+  }
+
+  renderSensitivityControl(prefix = 'settings') {
+    const inputId = `${prefix}-mouse-sensitivity`;
+    const outputId = `${prefix}-mouse-sensitivity-value`;
+    return `
+      <label class="sensitivity-control" for="${inputId}">
+        <span><b>Sensibilidad</b><output id="${outputId}">${this.mouseSensitivity.toFixed(1)}×</output></span>
+        <input id="${inputId}" type="range" min="${MOUSE_LOOK.minSensitivity}" max="${MOUSE_LOOK.maxSensitivity}" step="0.1" value="${this.mouseSensitivity}" data-setting="mouse-sensitivity" aria-label="Sensibilidad del ratón" />
+        <small><span>Lenta</span><span>Rápida</span></small>
+      </label>
+    `;
+  }
+
+  loadMouseSensitivity() {
+    try {
+      const saved = globalThis.localStorage?.getItem('pokebattle-survivor:settings:v1');
+      return saved == null ? MOUSE_LOOK.defaultSensitivity : normalizeSensitivity(saved);
+    } catch {
+      return MOUSE_LOOK.defaultSensitivity;
+    }
+  }
+
+  saveMouseSensitivity() {
+    try {
+      globalThis.localStorage?.setItem('pokebattle-survivor:settings:v1', String(this.mouseSensitivity));
+    } catch {
+      // Si el navegador bloquea almacenamiento, el ajuste sigue activo durante la sesión.
+    }
+  }
+
+  handleInput(event) {
+    const input = event.target?.closest?.('[data-setting="mouse-sensitivity"]');
+    if (!input) return;
+    this.mouseSensitivity = normalizeSensitivity(input.value);
+    this.saveMouseSensitivity();
+    for (const control of this.root.querySelectorAll?.('[data-setting="mouse-sensitivity"]') ?? []) {
+      control.value = String(this.mouseSensitivity);
+      const output = this.root.querySelector(`#${control.id}-value`);
+      if (output) output.value = `${this.mouseSensitivity.toFixed(1)}×`;
+    }
+    this.onMouseSensitivityChange(this.mouseSensitivity);
+  }
+
+  setPointerLocked(locked, details = {}) {
+    this.pointerLocked = Boolean(locked);
+    const hint = this.root.querySelector('#pointer-lock-hint');
+    if (!hint) return;
+    hint.classList.toggle('is-visible', !this.pointerLocked);
+    hint.textContent = details.unsupported
+      ? 'Este navegador no admite captura del ratón; prueba con un navegador de escritorio.'
+      : details.error
+        ? 'No se pudo capturar el ratón. Haz clic en el campo para volver a intentarlo.'
+        : 'Haz clic en la arena para capturar el ratón · Esc libera y pausa';
   }
 
   renderRegions() {
@@ -213,7 +303,7 @@ export class MenuController {
       <section class="page-heading">
         <span class="eyebrow">ARCHIVO DE CAMPO · ${pad2(unlockedCount)} / ${pad2(STARTERS.length)} REGISTRADOS</span>
         <h1>Pokédex</h1>
-        <p>Cada compañero ataca con dos movimientos: el <b>básico</b> se dispara solo y el <b>especial</b> se lanza con <kbd>Q</kbd> y tiene enfriamiento. El tipo decide la eficacia (×2 contra débiles, ×0,5 contra resistentes) y el STAB ×1,5 aplica cuando el movimiento coincide con tu tipo.</p>
+        <p>El ataque <b>básico</b> se dispara solo. El <b>especial con Q</b> y la <b>esquiva con Shift</b> empiezan bloqueados y se desbloquean como opciones de nivel; sus estados también se muestran en el HUD. El tipo decide la eficacia y el STAB ×1,5 aplica cuando el movimiento coincide con el tipo del compañero.</p>
       </section>
       ${REGIONS.map((region) => this.renderPokedexRegion(region)).join('')}
     `;
@@ -254,9 +344,9 @@ export class MenuController {
           ${unlocked ? `
             <div class="dex-moves">
               ${this.renderDexMove(moveset.basic, 'Automático')}
-              ${this.renderDexMove(moveset.special, 'Q · Especial')}
+              ${this.renderDexMove(moveset.special, 'Q · Especial', { lockedAtStart: true })}
             </div>
-            ${coverage.length ? `<p class="dex-coverage"><span>Súper eficaz con sus movimientos</span> ${coverage.map((type) => this.typeChip(type)).join('')}</p>` : ''}
+            ${coverage.length ? `<p class="dex-coverage"><span>Cobertura potencial (incluye el especial)</span> ${coverage.map((type) => this.typeChip(type)).join('')}</p>` : ''}
           ` : '<p class="dex-locked-note">Movimientos sin registrar. Elige este inicial en su región para verlos.</p>'}
           <span class="dex-status">${status}</span>
         </div>
@@ -264,7 +354,7 @@ export class MenuController {
     `;
   }
 
-  renderDexMove(move, slotLabel) {
+  renderDexMove(move, slotLabel, { lockedAtStart = false } = {}) {
     if (!move) return '';
     const shape = SHAPE_LABELS[move.shape] ?? 'Haz';
     return `
@@ -275,6 +365,7 @@ export class MenuController {
           ${this.typeChip(move.type)}
         </div>
         <small>${shape} · potencia ${move.power} · enfriamiento ${move.cooldown.toFixed(1).replace('.', ',')} s</small>
+        ${lockedAtStart ? '<small class="dex-move__locked">Bloqueado al inicio · se desbloquea al subir de nivel</small>' : ''}
         <small class="dex-move__desc">${escapeHtml(move.description)}</small>
       </div>
     `;
@@ -297,6 +388,7 @@ export class MenuController {
   attackPreview(move, slot) {
     if (!move) return null;
     const stab = this.flow.activeRun?.starter?.types?.includes(move.type) ?? false;
+    const unlocked = slot === 'basic' || Boolean(this.hudState?.specialAttack?.unlocked);
     return {
       slot,
       id: move.id,
@@ -308,7 +400,8 @@ export class MenuController {
       stab,
       cooldown: move.cooldown,
       cooldownRemaining: 0,
-      ready: true,
+      unlocked,
+      ready: unlocked,
     };
   }
 
@@ -329,19 +422,21 @@ export class MenuController {
 
   renderAttackRow(move, keyLabel) {
     const remaining = Math.max(0, Number(move.cooldownRemaining) || 0);
-    const ready = move.ready ?? remaining <= 0;
+    const unlocked = move.unlocked !== false;
+    const ready = unlocked && (move.ready ?? remaining <= 0);
     const cooldown = Math.max(0.0001, Number(move.cooldown) || 0.0001);
-    const fill = ready ? 100 : Math.max(0, Math.min(100, Math.round((1 - remaining / cooldown) * 100)));
+    const fill = unlocked ? (ready ? 100 : Math.max(0, Math.min(100, Math.round((1 - remaining / cooldown) * 100)))) : 0;
     const shape = SHAPE_LABELS[move.shape] ?? 'Haz';
+    const rowClass = keyLabel === 'Q' ? 'run-attack-row--special' : 'run-attack-row--basic';
     return `
-      <div class="run-attack-row ${keyLabel === 'Q' ? 'run-attack-row--special' : 'run-attack-row--basic'} ${ready ? 'is-ready' : ''}" style="--move-color:${move.color}">
+      <div class="run-attack-row ${rowClass} ${ready ? 'is-ready' : ''} ${unlocked ? '' : 'is-locked'}" style="--move-color:${move.color}" aria-label="${escapeHtml(move.name)}${unlocked ? '' : ', habilidad bloqueada'}">
         <span class="attack-key">${escapeHtml(keyLabel)}</span>
         <div class="attack-copy">
           <b>${escapeHtml(move.name)}</b>
-          <small>${this.typeChip(move.type, 'type-chip--mini')} ${shape} · ${move.damage} daño${move.stab ? ' · STAB' : ''}</small>
+          <small>${this.typeChip(move.type, 'type-chip--mini')} ${shape} · ${move.damage} daño${move.stab ? ' · STAB' : ''}${unlocked ? '' : ' · se desbloquea al subir de nivel'}</small>
           <div class="attack-cd-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${fill}"><i style="width:${fill}%"></i></div>
         </div>
-        <span class="attack-cd-text">${ready ? 'LISTO' : `${remaining.toFixed(1).replace('.', ',')} s`}</span>
+        <span class="attack-cd-text">${unlocked ? (ready ? 'LISTO' : `${remaining.toFixed(1).replace('.', ',')} s`) : 'BLOQUEADO'}</span>
       </div>
     `;
   }
@@ -404,7 +499,7 @@ export class MenuController {
     return `
       <main class="focus-screen">
         <header class="focus-header"><button class="text-button" data-action="back-to-hub">← Volver al mapa</button><span class="focus-step">PASO 01 <i></i> 02</span></header>
-        <section class="starter-intro"><span class="eyebrow">${escapeHtml(region.name.toUpperCase())} · PRIMERA EXPEDICIÓN</span><h1>Elige a tu<br /><em>compañero inicial.</em></h1><p>Esta elección gratuita se ofrece una sola vez al abrir una región. Los otros iniciales podrán desbloquearse más adelante.</p></section>
+        <section class="starter-intro"><span class="eyebrow">${escapeHtml(region.name.toUpperCase())} · PRIMERA EXPEDICIÓN</span><h1>Elige a tu<br /><em>compañero inicial.</em></h1><p>Esta elección gratuita se ofrece una sola vez al abrir una región. Comenzarás con el ataque básico automático; el especial y la esquiva se desbloquean al subir de nivel.</p></section>
         <section class="starter-grid" aria-label="Pokémon iniciales de ${escapeHtml(region.name)}">
           ${region.starters.map((starter, index) => `
             <article class="starter-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}">
@@ -423,9 +518,10 @@ export class MenuController {
   renderStarterMoves(starter) {
     const moveset = getStarterMoveset(starter.id);
     return `
-      <ul class="starter-moves" aria-label="Movimientos de ${escapeHtml(starter.name)}">
-        <li><span>AUTO</span> ${escapeHtml(moveset.basic.name)} ${this.typeChip(moveset.basic.type, 'type-chip--mini')}</li>
-        <li><span>Q</span> ${escapeHtml(moveset.special.name)} ${this.typeChip(moveset.special.type, 'type-chip--mini')}</li>
+      <ul class="starter-moves" aria-label="Habilidades de ${escapeHtml(starter.name)}">
+        <li><span>AUTO</span> ${escapeHtml(moveset.basic.name)} ${this.typeChip(moveset.basic.type, 'type-chip--mini')} <b class="skill-state skill-state--open">Disponible</b></li>
+        <li class="is-locked"><span>Q · NV.</span> ${escapeHtml(moveset.special.name)} ${this.typeChip(moveset.special.type, 'type-chip--mini')} <b class="skill-state">Bloqueado</b></li>
+        <li class="is-locked"><span>SHIFT</span> Esquiva <b class="skill-state">Bloqueada</b></li>
       </ul>
     `;
   }
@@ -458,9 +554,9 @@ export class MenuController {
           <div class="ready-copy"><span class="eyebrow"><span class="status-dot"></span> REGIÓN DISPONIBLE · GEN ${String(region.generation).padStart(2, '0')}</span><h1>${escapeHtml(region.mapName)}<br /><em>te espera.</em></h1><p>Sobrevive a las hordas de ${region.enemies.map(escapeHtml).join(' y ')}, usa los movimientos de ${escapeHtml(starter.name)}, absorbe orbes de XP y elige entre tres mejoras por nivel antes de enfrentarte a ${escapeHtml(region.boss)}.</p>
             <div class="ready-objectives"><div><small>ENEMIGOS DETECTADOS</small><b>${region.enemies.map(escapeHtml).join(' · ')}</b></div><div><small>JEFE DE REGIÓN</small><b class="boss-text">${escapeHtml(region.boss)}</b></div></div>
             <button class="button button--primary button--launch" data-action="enter-run">Entrar a la partida <span aria-hidden="true">↗</span></button>
-            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> ratón apuntar <span>·</span> <kbd>Q</kbd> especial <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
+            <p class="control-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> relativo a cámara <span>·</span> clic + ratón mirar <span>·</span> <kbd>Q</kbd>/<kbd>SHIFT</kbd> desbloqueables <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</p>
           </div>
-          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>ATAQUE AUTOMÁTICO</span><b>${escapeHtml(getStarterMoveset(starter.id).basic.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).basic.type)} · ${SHAPE_LABELS[getStarterMoveset(starter.id).basic.shape] ?? 'Haz'}</small></b></div><div class="partner-card__stat"><span>ESPECIAL · TECLA Q</span><b>${escapeHtml(getStarterMoveset(starter.id).special.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).special.type)} · enfriamiento ${getStarterMoveset(starter.id).special.cooldown.toFixed(1).replace('.', ',')} s</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· 1 de 3 mejoras por nivel</small></b></div></aside>
+          <aside class="partner-card" style="--creature-color:${starter.color};--creature-accent:${starter.accent}"><span class="eyebrow">COMPAÑERO DE ESTA REGIÓN</span><div class="partner-art"><div class="starter-orb" aria-hidden="true"><i></i></div></div><h2>${escapeHtml(starter.name)}</h2><div class="type-row">${starter.types.map((type) => `<span class="type-chip">${escapeHtml(type)}</span>`).join('')}</div><div class="partner-card__stat"><span>ATAQUE AUTOMÁTICO</span><b>${escapeHtml(getStarterMoveset(starter.id).basic.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).basic.type)} · ${SHAPE_LABELS[getStarterMoveset(starter.id).basic.shape] ?? 'Haz'}</small></b></div><div class="partner-card__stat"><span>ESPECIAL · Q · BLOQUEADO AL INICIO</span><b>${escapeHtml(getStarterMoveset(starter.id).special.name)} <small>· ${escapeHtml(getStarterMoveset(starter.id).special.type)} · se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>ESQUIVA · SHIFT · BLOQUEADA AL INICIO</span><b>Impulso evasivo <small>· se desbloquea con una mejora de nivel</small></b></div><div class="partner-card__stat"><span>PROGRESIÓN EN PARTIDA</span><b>Orbes de XP <small>· elige 1 de 3 mejoras por nivel</small></b></div></aside>
         </section>
       </main>
     `;
@@ -495,6 +591,8 @@ export class MenuController {
           <button class="hud-pause" data-action="pause-run" aria-label="Pausar partida">Ⅱ</button>
         </header>
 
+        <div id="pointer-lock-hint" class="pointer-lock-hint ${this.pointerLocked ? '' : 'is-visible'}" role="status">Haz clic en la arena para capturar el ratón · Esc libera y pausa</div>
+
         <aside class="run-vitals" aria-label="Estado del compañero">
           <div class="vital-block">
             <div class="vital-row">
@@ -518,9 +616,9 @@ export class MenuController {
 
           <div id="run-attack-slot">${this.renderAttackPanel(hud, run)}</div>
 
-          <div class="run-skill-row ${hud.dashReady ? 'is-ready' : ''}">
+          <div class="run-skill-row ${hud.dashReady ? 'is-ready' : ''} ${hud.dashUnlocked ? '' : 'is-locked'}">
             <span>➤ ESQUIVA (SHIFT)</span>
-            <b id="run-dash-text">${hud.dashReady ? 'LISTA' : `${hud.dashCooldown.toFixed(1)} s`}</b>
+            <b id="run-dash-text">${hud.dashUnlocked ? (hud.dashReady ? 'LISTA' : `${hud.dashCooldown.toFixed(1)} s`) : 'BLOQUEADA · SUBE NV.'}</b>
           </div>
 
           <div id="run-upgrades-strip" class="run-upgrades-strip">
@@ -538,7 +636,7 @@ export class MenuController {
 
         <div class="run-hud__bottom">
           <span class="run-companion"><i style="--creature-color:${run.starter.color}"></i>${escapeHtml(run.starter.name)}${hud.eliteKills ? ` · <b>${hud.eliteKills} ÉLITE</b>` : ''}</span>
-          <span class="run-control-line"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover <span>·</span> <kbd>SPACE</kbd> saltar <span>·</span> <kbd>Q</kbd> especial <span>·</span> <kbd>SHIFT</kbd> esquivar <span>·</span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span>
+          <span class="run-control-line"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> mover según cámara</span><span class="control-separator">·</span><span class="skill-control ${hud.specialAttack?.unlocked ? '' : 'is-locked'}"><kbd>Q</kbd> especial${hud.specialAttack?.unlocked ? '' : ' bloqueado'}</span><span class="control-separator">·</span><span class="skill-control ${hud.dashUnlocked ? '' : 'is-locked'}"><kbd>SHIFT</kbd> esquiva${hud.dashUnlocked ? '' : ' bloqueada'}</span><span class="control-separator">·</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> mejoras</span></span>
           <button class="run-pause-text" data-action="pause-run">PAUSA <span>Ⅱ</span></button>
         </div>
 
@@ -549,7 +647,8 @@ export class MenuController {
             <section class="pause-dialog" role="dialog" aria-modal="true" aria-labelledby="pause-title">
               <span class="eyebrow">PARTIDA EN PAUSA</span>
               <h2 id="pause-title">Toma aire.</h2>
-              <p>La horda espera. Puedes continuar combatiendo, retirarte con el botín reunido o volver al mapa.</p>
+              <p>La horda espera. Puedes continuar, ajustar la cámara, retirarte con el botín o volver al mapa.</p>
+              ${this.renderSensitivityControl('pause')}
               <button class="button button--primary" data-action="resume-run">Volver a la partida <span>↗</span></button>
               <button class="button button--secondary pause-extract" data-action="extract-run">Retirarse con botín <span>→</span></button>
               <button class="text-button pause-exit" data-action="return-hub">Abandonar expedición</button>
@@ -614,7 +713,7 @@ export class MenuController {
             ${choices.map((choice, index) => `
               <button
                 type="button"
-                class="levelup-card"
+                class="levelup-card ${choice.unlockSkill ? 'levelup-card--unlock' : ''}"
                 data-action="choose-run-upgrade"
                 data-upgrade-id="${escapeHtml(choice.id)}"
               >
@@ -625,7 +724,7 @@ export class MenuController {
                 <div class="levelup-card__icon">${escapeHtml(choice.icon)}</div>
                 <h3>${escapeHtml(choice.name)}</h3>
                 <p>${escapeHtml(choice.description)}</p>
-                <span class="levelup-card__cta">Elegir mejora <span aria-hidden="true">↗</span></span>
+                <span class="levelup-card__cta">${choice.unlockSkill ? 'Desbloquear habilidad' : 'Elegir mejora'} <span aria-hidden="true">↗</span></span>
               </button>
             `).join('')}
           </div>
@@ -689,7 +788,7 @@ export class MenuController {
         this.hudState = this.createDefaultHudState();
         this.render();
         try {
-          await this.onStartRun(runConfig);
+          await this.onStartRun(runConfig, this.mouseSensitivity);
         } catch (error) {
           this.flow.returnToHub();
           this.render();
@@ -817,10 +916,13 @@ export class MenuController {
     const dashText = this.root.querySelector('#run-dash-text');
     const dashRow = this.root.querySelector('.run-skill-row');
     if (dashText && dashRow) {
-      dashText.textContent = this.hudState.dashReady
-        ? 'LISTA'
-        : `${(this.hudState.dashCooldown ?? 0).toFixed(1)} s`;
+      dashText.textContent = !this.hudState.dashUnlocked
+        ? 'BLOQUEADA · SUBE NV.'
+        : this.hudState.dashReady
+          ? 'LISTA'
+          : `${(this.hudState.dashCooldown ?? 0).toFixed(1)} s`;
       dashRow.classList.toggle('is-ready', Boolean(this.hudState.dashReady));
+      dashRow.classList.toggle('is-locked', !this.hudState.dashUnlocked);
     }
 
     const miniBossBanner = this.root.querySelector('#run-mini-boss-banner');
@@ -855,5 +957,6 @@ export class MenuController {
 
   dispose() {
     this.root.removeEventListener('click', this.handleClick);
+    this.root.removeEventListener('input', this.handleInput);
   }
 }

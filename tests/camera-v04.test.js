@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CAMERA_RIG,
+  MOUSE_LOOK,
+  applyMouseLook,
   cameraRelativeMovement,
   followCameraYaw,
   forwardFromYaw,
   nextFollowTimer,
+  normalizeSensitivity,
+  smoothYaw,
   thirdPersonCameraPose,
 } from '../src/game/cameraRig.js';
 
@@ -112,4 +116,44 @@ test('v0.4 controles: la dirección de W sigue al giro de la cámara', () => {
   const moved = cameraRelativeMovement({ x: 0, z: -1 }, yaw);
   near(moved.x, forward.x, 1e-9);
   near(moved.z, forward.z, 1e-9);
+});
+
+test('Pointer Lock: sensibilidad escala yaw/pitch sin rotar el cuerpo directamente', () => {
+  const slow = applyMouseLook(Math.PI, 0, 40, -20, 0.5);
+  const fast = applyMouseLook(Math.PI, 0, 40, -20, 1);
+  near(Math.abs(slow.yaw - Math.PI), MOUSE_LOOK.radiansPerPixel * 20, 1e-9, 'yaw con sensibilidad 0,5');
+  near(Math.abs(fast.yaw - Math.PI), MOUSE_LOOK.radiansPerPixel * 40, 1e-9, 'yaw con sensibilidad 1');
+  assert.ok(slow.pitch > 0, 'mover arriba eleva la vista');
+  assert.ok(fast.pitch > slow.pitch, 'más sensibilidad produce más inclinación');
+  assert.ok(forwardFromYaw(fast.yaw).x > 0, 'mover ratón a la derecha mira a la derecha');
+});
+
+test('Pointer Lock: pitch y sensibilidad se limitan a rangos seguros', () => {
+  assert.equal(normalizeSensitivity(-4), MOUSE_LOOK.minSensitivity);
+  assert.equal(normalizeSensitivity(99), MOUSE_LOOK.maxSensitivity);
+  assert.equal(normalizeSensitivity(Number.NaN), MOUSE_LOOK.defaultSensitivity);
+  const look = applyMouseLook(0, 0, 0, -10000, 2);
+  assert.equal(look.pitch, CAMERA_RIG.maxPitch);
+});
+
+test('cámara: el giro suave usa el camino angular más corto y no da un tirón', () => {
+  const current = Math.PI - 0.04;
+  const target = -Math.PI + 0.04;
+  const next = smoothYaw(current, target, 1 / 60);
+  assert.ok(Math.abs(next - current) < 0.04, 'un pequeño delta no puede girar de golpe');
+  assert.ok(Math.abs(normalizeDifference(target, next)) < 0.08, 'avanza por el arco corto');
+});
+
+function normalizeDifference(a, b) {
+  return ((((a - b + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
+}
+
+test('cámara: el pitch cambia el punto de mira sin desplazar el seguimiento lateral', () => {
+  const target = { x: 2, z: -3 };
+  const level = thirdPersonCameraPose(target, Math.PI / 2, 0, CAMERA_RIG, 0);
+  const raised = thirdPersonCameraPose(target, Math.PI / 2, 0, CAMERA_RIG, 0.25);
+  near(raised.position.x, level.position.x);
+  near(raised.position.z, level.position.z);
+  assert.ok(raised.lookAt.y > level.lookAt.y, 'la vista vertical mueve el punto de mira');
+  assert.ok(raised.position.z < target.z, 'la cámara continúa detrás del personaje');
 });

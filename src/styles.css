@@ -727,3 +727,114 @@ kbd { display: inline-grid; min-width: 18px; height: 17px; place-items: center; 
 .starter-moves li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .starter-moves span { min-width: 34px; color: #8ea396; font: 7px var(--mono); letter-spacing: .08em; }
 
+
+/* ---- v0.5: guía, habilidades bloqueadas y controles Pointer Lock ---- */
+.guide-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(270px, .7fr);
+  align-items: start;
+  gap: 14px;
+  padding-bottom: 42px;
+}
+.guide-panel {
+  min-width: 0;
+  padding: clamp(16px, 2.5vw, 23px);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: linear-gradient(150deg, rgba(24, 40, 33, .85), rgba(15, 26, 23, .92));
+}
+.guide-panel--steps { display: grid; gap: 0; }
+.guide-step { display: grid; grid-template-columns: 35px minmax(0, 1fr); gap: 13px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.guide-step:first-child { padding-top: 0; }
+.guide-step:last-child { padding-bottom: 0; border-bottom: 0; }
+.guide-step > span { display: grid; width: 31px; height: 31px; place-items: center; color: var(--lime); border: 1px solid rgba(199, 242, 123, .24); border-radius: 8px; background: rgba(199, 242, 123, .06); font: 9px var(--mono); }
+.guide-step h2, .guide-settings h2 { margin: 0 0 6px; color: #e8f0e6; font-size: 14px; letter-spacing: -.025em; }
+.guide-step p, .guide-settings > p { margin: 0; color: #94a69a; font-size: 10px; line-height: 1.7; }
+.guide-step kbd { margin: 0 1px; }
+.guide-settings { position: sticky; top: 15px; }
+.guide-settings h2 { margin-top: 9px; font-size: 20px; }
+.sensitivity-control { display: grid; gap: 10px; margin: 16px 0; padding: 13px; border: 1px solid rgba(219, 239, 221, .12); border-radius: 7px; background: rgba(4, 12, 9, .26); text-align: left; }
+.sensitivity-control > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #dce8dc; font-size: 10px; }
+.sensitivity-control output { color: var(--lime); font: 11px var(--mono); }
+.sensitivity-control input[type="range"] { width: 100%; margin: 2px 0; accent-color: var(--lime); cursor: pointer; }
+.sensitivity-control small { display: flex; justify-content: space-between; color: #788b7f; font: 7px var(--mono); }
+.guide-tip { display: flex; gap: 9px; margin-top: 17px; padding: 10px; color: #a6b6a7; border-left: 2px solid var(--lime); background: rgba(199, 242, 123, .045); font-size: 9px; line-height: 1.5; }
+.guide-tip b { flex: 0 0 auto; color: var(--lime); }
+
+.pointer-lock-hint {
+  position: absolute;
+  top: 69px;
+  left: 50%;
+  z-index: 6;
+  max-width: calc(100vw - 30px);
+  padding: 8px 12px;
+  color: #dcebd9;
+  border: 1px solid rgba(199, 242, 123, .24);
+  border-radius: 999px;
+  background: rgba(8, 17, 13, .83);
+  box-shadow: 0 5px 22px rgba(0, 0, 0, .25);
+  font: 8px var(--mono);
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -5px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  backdrop-filter: blur(10px);
+}
+.pointer-lock-hint.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.run-attack-row.is-locked { border-style: dashed; border-color: rgba(201, 215, 196, .17); background: rgba(12, 19, 16, .7); }
+.run-attack-row.is-locked .attack-key { color: #a6b1a4; background: rgba(255, 255, 255, .045); }
+.run-attack-row.is-locked .attack-copy b, .run-attack-row.is-locked .attack-copy small { color: #829087; }
+.run-attack-row.is-locked .attack-cd-bar { opacity: .35; }
+.run-attack-row.is-locked .attack-cd-text { color: #d5b97b; font-size: 7px; }
+.run-skill-row.is-locked { color: #849087; }
+.run-skill-row.is-locked b { color: #d5b97b; font-size: 7px; }
+.run-control-line { flex-wrap: wrap; justify-content: center; }
+.run-control-line > span { color: inherit; margin: 0; }
+.run-control-line > .control-separator { color: #56695d; margin: 0 2px; }
+.run-control-line .skill-control.is-locked { color: #a9956c; }
+.run-control-line .skill-control.is-locked kbd { color: #a9956c; border-color: rgba(213, 185, 123, .18); }
+.starter-moves li.is-locked { color: #8f9a8f; }
+.skill-state { margin-left: auto; color: #d3b779; font: 6px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.skill-state--open { color: var(--lime); }
+.dex-move__locked { color: #d3b779 !important; font-weight: 700 !important; }
+.levelup-card--unlock { border-color: rgba(199, 242, 123, .34); background: linear-gradient(155deg, rgba(57, 74, 42, .63), rgba(20, 33, 27, .95)); }
+.levelup-card--unlock .levelup-card__icon { color: #e8f8a9; border-color: rgba(199, 242, 123, .46); background: rgba(199, 242, 123, .14); }
+
+@media (max-width: 900px) {
+  .guide-layout { grid-template-columns: minmax(0, 1fr) minmax(230px, .78fr); }
+  .guide-settings { position: static; }
+}
+
+@media (max-width: 680px) {
+  .main-nav { justify-content: space-between; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .main-nav::-webkit-scrollbar { display: none; }
+  .nav-button { flex: 0 0 auto; padding: 0 7px; font-size: 8px; }
+  .guide-layout { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+  .guide-panel { padding: 15px; }
+  .guide-step { grid-template-columns: 27px minmax(0, 1fr); gap: 9px; }
+  .guide-step > span { width: 25px; height: 25px; font-size: 8px; }
+  .guide-step h2 { font-size: 12px; }
+  .guide-step p, .guide-settings > p { font-size: 9px; }
+  .starter-moves { gap: 5px; font-size: 8px; }
+  .starter-moves li { gap: 4px; }
+  .skill-state { font-size: 5.5px; }
+  .pointer-lock-hint { top: auto; bottom: 112px; width: max-content; font-size: 7px; }
+  .run-hud__top { grid-template-columns: minmax(0, 1fr) auto 35px; gap: 6px; }
+  .run-location { min-width: 0; }
+  .run-location > div { min-width: 0; }
+  .run-location b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-metrics { gap: 4px; }
+  .run-timer { min-width: 46px; padding: 5px 4px; }
+  .levelup-backdrop, .pause-backdrop { place-items: start center; overflow-y: auto; padding: 10px; }
+  .levelup-dialog, .pause-dialog { max-height: calc(100vh - 20px); overflow-y: auto; margin: auto 0; }
+  .levelup-grid { gap: 8px; }
+  .levelup-card { padding: 11px; gap: 8px; }
+  .run-control-line { gap: 4px; font-size: 7px; }
+}
+
+@media (max-width: 360px) {
+  .run-metrics { gap: 2px; }
+  .run-timer { min-width: 42px; padding: 5px 3px; }
+  .run-timer b { font-size: 10px; }
+}

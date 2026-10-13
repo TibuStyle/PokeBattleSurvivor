@@ -47,9 +47,17 @@ function createSession(starterId, options = {}) {
   );
 }
 
-describe('v0.4 ataques: Charmander solo usa Ascuas y Lanzallamas', () => {
+function unlockSpecial(session) {
+  session.gainXp(session.xpToNext);
+  assert.equal(session.status, 'level-up');
+  assert.ok(session.pendingChoices.some((choice) => choice.id === 'unlockSpecial'));
+  assert.equal(session.chooseUpgrade('unlockSpecial').ok, true);
+  return session;
+}
+
+describe('v0.4 ataques: Charmander usa Ascuas y Lanzallamas tras desbloquear el especial', () => {
   it('ningún golpe ni haz de Charmander procede de Psicorrayo', () => {
-    const session = createSession('charmander');
+    const session = unlockSpecial(createSession('charmander'));
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -4, hp: 999 });
     session.spawnEnemy({ species: 'Weedle', x: 1, z: -5, hp: 999 });
     const moveIds = new Set();
@@ -72,6 +80,8 @@ describe('v0.4 ataques: Charmander solo usa Ascuas y Lanzallamas', () => {
     assert.equal(hud.specialAttack.name, 'Lanzallamas');
     assert.equal(hud.basicAttack.stab, true, 'Ascuas es de tipo Fuego, igual que Charmander');
     assert.equal(hud.specialAttack.stab, true);
+    assert.equal(hud.specialAttack.unlocked, false, 'el especial empieza bloqueado');
+    assert.equal(hud.dashUnlocked, false, 'la esquiva empieza bloqueada');
   });
 });
 
@@ -100,7 +110,7 @@ describe('v0.4 daño: STAB y efectividad', () => {
   });
 
   it('Bomba Lodo de Bulbasaur usa STAB (Veneno) contra Caterpie (Bicho) y hace 68', () => {
-    const session = createSession('bulbasaur');
+    const session = unlockSpecial(createSession('bulbasaur'));
     session.spawnEnemy({ species: 'Caterpie', x: 1.5, z: 0, hp: 999 });
     const result = session.fireAttack('special', DOWN, { force: true });
     const [hit] = result.hits;
@@ -122,7 +132,7 @@ describe('v0.4 daño: STAB y efectividad', () => {
 
 describe('v0.4 formas de ataque', () => {
   it('Lanzallamas es un abanico: alcanza a los enemigos delante y no a los de atrás', () => {
-    const session = createSession('charmander');
+    const session = unlockSpecial(createSession('charmander'));
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -2, hp: 999 });
     session.spawnEnemy({ species: 'Caterpie', x: 0.5, z: -3, hp: 999 });
     session.spawnEnemy({ species: 'Caterpie', x: -0.5, z: -4, hp: 999 });
@@ -137,7 +147,7 @@ describe('v0.4 formas de ataque', () => {
   });
 
   it('Bomba Lodo es un área alrededor del jugador: alcanza el radio y no lo que queda fuera', () => {
-    const session = createSession('bulbasaur');
+    const session = unlockSpecial(createSession('bulbasaur'));
     const near = session.spawnEnemy({ species: 'Caterpie', x: 1.5, z: 0, hp: 999 });
     const far = session.spawnEnemy({ species: 'Caterpie', x: 0, z: -6, hp: 999 });
     const result = session.fireAttack('special', DOWN, { force: true });
@@ -152,7 +162,7 @@ describe('v0.4 formas de ataque', () => {
 
 describe('v0.4 especial con Q y enfriamiento visible', () => {
   it('el especial se bloquea mientras se enfría y se reduce con el tiempo', () => {
-    const session = createSession('charmander');
+    const session = unlockSpecial(createSession('charmander'));
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -3, hp: 999 });
     const first = session.castSpecial(DOWN);
     assert.equal(first.fired, true);
@@ -174,7 +184,7 @@ describe('v0.4 especial con Q y enfriamiento visible', () => {
   });
 
   it('pulsar Q (specialPressed) lanza el especial y rechaza una segunda pulsación con motivo', () => {
-    const session = createSession('charmander');
+    const session = unlockSpecial(createSession('charmander'));
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -3, hp: 999 });
     const first = session.update(1 / 60, { aimDirection: DOWN, specialPressed: true });
     assert.ok(first.attacks.some((attack) => attack.slot === 'special'), 'la primera pulsación dispara el especial');
@@ -184,7 +194,7 @@ describe('v0.4 especial con Q y enfriamiento visible', () => {
   });
 
   it('el básico sigue siendo automático y no depende del enfriamiento del especial', () => {
-    const session = createSession('charmander');
+    const session = unlockSpecial(createSession('charmander'));
     session.spawnEnemy({ species: 'Caterpie', x: 0, z: -4, hp: 999 });
     session.castSpecial(DOWN);
     const events = session.update(0.6, { aimDirection: DOWN });

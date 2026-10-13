@@ -1,5 +1,10 @@
-import * as THREE from 'three';
-import { cameraRelativeMovement } from './cameraRig.js';
+import {
+  MOUSE_LOOK,
+  applyMouseLook,
+  cameraRelativeMovement,
+  forwardFromYaw,
+  normalizeSensitivity,
+} from './cameraRig.js';
 
 const MOVEMENT_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 const DASH_CODES = new Set(['ShiftLeft', 'ShiftRight']);
@@ -13,34 +18,54 @@ const UPGRADE_KEY_INDEX = {
 };
 
 /**
- * WASD + salto + esquiva (Shift) + especial (Q) + puntería de ratón convertida de pantalla a suelo 3D.
- * El movimiento puede ser relativo a la cámara de tercera persona (ver cameraRig.js).
+ * Controles de acción de tercera persona:
+ * - WASD relativo al yaw de cámara.
+ * - Pointer Lock para mirar con movimiento relativo del ratón, sin rotación del cuerpo directa.
+ * - Q y Shift solo producen solicitudes si la habilidad correspondiente está desbloqueada.
  */
 export class HybridControls {
-  constructor({ element, camera, player, onPrimaryFire, onJump, onDash, onSpecial = () => {}, onPause, onSelectUpgrade }) {
+  constructor({
+    element,
+    cameraYaw = Math.PI,
+    cameraPitch = 0,
+    mouseSensitivity = MOUSE_LOOK.defaultSensitivity,
+    onPrimaryFire = () => {},
+    onJump,
+    onDash,
+    onSpecial,
+    onPause,
+    onSelectUpgrade,
+    onCameraLook = () => {},
+    onPointerLockChange = () => {},
+    onLockedAbility = () => {},
+    canUseSpecial = () => true,
+    canUseDash = () => true,
+  }) {
     this.element = element;
-    this.camera = camera;
-    this.player = player;
+    this.document = element.ownerDocument ?? document;
+    this.window = this.document.defaultView ?? window;
+    this.cameraYaw = Number.isFinite(cameraYaw) ? cameraYaw : Math.PI;
+    this.cameraPitch = Number.isFinite(cameraPitch) ? cameraPitch : 0;
+    this.mouseSensitivity = normalizeSensitivity(mouseSensitivity);
     this.onPrimaryFire = onPrimaryFire;
     this.onJump = onJump;
     this.onDash = onDash;
     this.onSpecial = onSpecial;
     this.onPause = onPause;
     this.onSelectUpgrade = onSelectUpgrade;
+    this.onCameraLook = onCameraLook;
+    this.onPointerLockChange = onPointerLockChange;
+    this.onLockedAbility = onLockedAbility;
+    this.canUseSpecial = canUseSpecial;
+    this.canUseDash = canUseDash;
 
     this.keys = new Set();
-    this.mouseNdc = new THREE.Vector2(0, 0);
-    this.raycaster = new THREE.Raycaster();
-    this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    this.rayHit = new THREE.Vector3();
-    this.movement = new THREE.Vector3();
-    this.aimPoint = new THREE.Vector3(0, 0, -7);
-    this.aimDirection = new THREE.Vector3(0, 0, -1);
+    this.aimDirection = forwardFromYaw(this.cameraYaw);
     this.jumpRequested = false;
     this.dashRequested = false;
     this.specialRequested = false;
     this.primaryFireHeld = false;
-    this.pointerMoved = false;
+    this.pointerLocked = this.document.pointerLockElement === this.element;
 
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleKeyUp = this.handleKeyUp.bind(this);
@@ -48,14 +73,20 @@ export class HybridControls {
     this.handlePointerMove = this.handlePointerMove.bind(this);
     this.handlePointerDown = this.handlePointerDown.bind(this);
     this.handlePointerUp = this.handlePointerUp.bind(this);
+    this.handlePointerLockChange = this.handlePointerLockChange.bind(this);
+    this.handlePointerLockError = this.handlePointerLockError.bind(this);
 
-    window.addEventListener('keydown', this.handleKeyDown);
-    window.addEventListener('keyup', this.handleKeyUp);
-    window.addEventListener('blur', this.handleBlur);
-    window.addEventListener('pointerup', this.handlePointerUp);
-    window.addEventListener('pointercancel', this.handlePointerUp);
-    element.addEventListener('pointermove', this.handlePointerMove);
-    element.addEventListener('pointerdown', this.handlePointerDown);
+    this.window.addEventListener('keydown', this.handleKeyDown);
+    this.window.addEventListener('keyup', this.handleKeyUp);
+    this.window.addEventListener('blur', this.handleBlur);
+    this.window.addEventListener('pointerup', this.handlePointerUp);
+    this.window.addEventListener('pointercancel', this.handlePointerUp);
+    this.document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+    this.document.addEventListener('pointerlockerror', this.handlePointerLockError);
+    this.document.addEventListener('mousemove', this.handlePointerMove);
+    this.element.addEventListener('pointerdown', this.handlePointerDown);
+
+    this.onPointerLockChange(this.pointerLocked);
   }
 
   handleKeyDown(event) {
@@ -67,10 +98,7 @@ export class HybridControls {
       }
     }
 
-    const target = event.target;
-    if (target instanceof HTMLElement && target.closest('button, input, textarea, select, [contenteditable="true"]')) {
-      return;
-    }
+    if (event.target?.closest?.('button, input, textarea, select, [contenteditable="true"]')) return;
 
     if (MOVEMENT_CODES.has(event.code)) {
       this.keys.add(event.code);
@@ -87,25 +115,29 @@ export class HybridControls {
     }
 
     if (DASH_CODES.has(event.code)) {
-      this.keys.add(event.code);
       event.preventDefault();
-      if (!event.repeat) {
-        this.dashRequested = true;
-        this.onDash?.({
-          movement: this.getMovementVector().clone(),
-          aimDirection: this.aimDirection.clone(),
-        });
+      if (event.repeat) return;
+      if (!this.canUseDash()) {
+        this.onLockedAbility('dash');
+        return;
       }
+      this.keys.add(event.code);
+      this.dashRequested = true;
+      this.onDash?.({ movement: this.getMovementVector(), aimDirection: this.getAimDirection() });
     }
 
     if (event.code === 'KeyQ' && !event.repeat) {
       event.preventDefault();
+      if (!this.canUseSpecial()) {
+        this.onLockedAbility('special');
+        return;
+      }
       this.specialRequested = true;
       this.onSpecial?.();
     }
 
     if (event.code === 'Escape' && !event.repeat) {
-      event.preventDefault();
+      // No cancelar el comportamiento nativo: Escape también libera Pointer Lock.
       this.onPause?.();
     }
   }
@@ -119,75 +151,85 @@ export class HybridControls {
   }
 
   handlePointerMove(event) {
-    this.setPointer(event);
-    this.pointerMoved = true;
-  }
-
-  /** Indica si el cursor se movió desde la última consulta (para seguir al apuntado con la cámara). */
-  consumePointerMoved() {
-    const moved = this.pointerMoved;
-    this.pointerMoved = false;
-    return moved;
+    if (!this.pointerLocked || this.document.pointerLockElement !== this.element) return;
+    const look = applyMouseLook(
+      this.cameraYaw,
+      this.cameraPitch,
+      event.movementX,
+      event.movementY,
+      this.mouseSensitivity,
+    );
+    this.cameraYaw = look.yaw;
+    this.cameraPitch = look.pitch;
+    this.aimDirection = forwardFromYaw(this.cameraYaw);
+    this.onCameraLook({ ...look });
   }
 
   handlePointerDown(event) {
     if (event.button !== 0) return;
     this.primaryFireHeld = true;
-    this.element.focus({ preventScroll: true });
-    this.setPointer(event);
-    this.updateAim();
+    this.element.focus?.({ preventScroll: true });
+
+    if (!this.pointerLocked && this.document.pointerLockElement !== this.element) {
+      this.requestPointerLock();
+    }
+
     this.onPrimaryFire?.({
-      direction: this.aimDirection.clone(),
-      target: this.aimPoint.clone(),
+      direction: this.getAimDirection(),
+      target: this.getAimDirection(),
     });
   }
 
   handlePointerUp(event) {
-    if (event.button === 0 || event.type === 'pointercancel') {
-      this.primaryFireHeld = false;
+    if (event.button === 0 || event.type === 'pointercancel') this.primaryFireHeld = false;
+  }
+
+  requestPointerLock() {
+    if (typeof this.element.requestPointerLock !== 'function') {
+      this.onPointerLockChange(false, { unsupported: true });
+      return false;
+    }
+    try {
+      const request = this.element.requestPointerLock();
+      if (request && typeof request.catch === 'function') {
+        request.catch(() => this.onPointerLockChange(false, { error: true }));
+      }
+      return true;
+    } catch {
+      this.onPointerLockChange(false, { error: true });
+      return false;
     }
   }
 
-  setPointer(event) {
-    const rect = this.element.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    this.mouseNdc.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
+  handlePointerLockChange() {
+    this.pointerLocked = this.document.pointerLockElement === this.element;
+    this.onPointerLockChange(this.pointerLocked);
   }
 
-  /** Recalcula el punto del suelo cuando la cámara sigue al jugador. */
-  updateAim() {
-    this.raycaster.setFromCamera(this.mouseNdc, this.camera);
-    const hit = this.raycaster.ray.intersectPlane(this.groundPlane, this.rayHit);
-    if (!hit) return;
-
-    this.aimPoint.copy(hit);
-    this.aimDirection.copy(hit).sub(this.player.position).setY(0);
-    if (this.aimDirection.lengthSq() > 0.0001) this.aimDirection.normalize();
-    else this.aimDirection.set(0, 0, -1);
+  handlePointerLockError() {
+    this.pointerLocked = false;
+    this.onPointerLockChange(false, { error: true });
   }
 
-  /**
-   * Vector de movimiento en el plano. Con `cameraYaw` (radianes) el movimiento es relativo
-   * a la cámara de tercera persona; sin él, usa los ejes del mundo.
-   */
-  getMovementVector(cameraYaw = null) {
+  releasePointerLock() {
+    if (this.document.pointerLockElement === this.element) this.document.exitPointerLock?.();
+  }
+
+  setMouseSensitivity(value) {
+    this.mouseSensitivity = normalizeSensitivity(value);
+    return this.mouseSensitivity;
+  }
+
+  getMovementVector(cameraYaw = this.cameraYaw) {
     const x = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight'))
       - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
     const z = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown'))
       - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
+    return cameraRelativeMovement({ x, z }, cameraYaw);
+  }
 
-    if (Number.isFinite(cameraYaw)) {
-      const relative = cameraRelativeMovement({ x, z }, cameraYaw);
-      this.movement.set(relative.x, 0, relative.z);
-      return this.movement;
-    }
-
-    this.movement.set(x, 0, z);
-    if (this.movement.lengthSq() > 1) this.movement.normalize();
-    return this.movement;
+  getAimDirection() {
+    return { ...this.aimDirection };
   }
 
   isJumpHeld() {
@@ -225,16 +267,20 @@ export class HybridControls {
     this.primaryFireHeld = false;
     this.dashRequested = false;
     this.specialRequested = false;
+    this.jumpRequested = false;
   }
 
   dispose() {
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('keyup', this.handleKeyUp);
-    window.removeEventListener('blur', this.handleBlur);
-    window.removeEventListener('pointerup', this.handlePointerUp);
-    window.removeEventListener('pointercancel', this.handlePointerUp);
-    this.element.removeEventListener('pointermove', this.handlePointerMove);
+    this.window.removeEventListener('keydown', this.handleKeyDown);
+    this.window.removeEventListener('keyup', this.handleKeyUp);
+    this.window.removeEventListener('blur', this.handleBlur);
+    this.window.removeEventListener('pointerup', this.handlePointerUp);
+    this.window.removeEventListener('pointercancel', this.handlePointerUp);
+    this.document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+    this.document.removeEventListener('pointerlockerror', this.handlePointerLockError);
+    this.document.removeEventListener('mousemove', this.handlePointerMove);
     this.element.removeEventListener('pointerdown', this.handlePointerDown);
+    if (this.document.pointerLockElement === this.element) this.document.exitPointerLock?.();
     this.clearKeys();
   }
 }

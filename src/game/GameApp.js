@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { HybridControls } from './HybridControls.js';
 import { RunSession } from './RunSession.js';
-import { CAMERA_RIG, followCameraYaw, nextFollowTimer, thirdPersonCameraPose } from './cameraRig.js';
+import { CAMERA_RIG, MOUSE_LOOK, normalizeSensitivity, thirdPersonCameraPose } from './cameraRig.js';
 
 const WORLD_LIMIT = 52;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
@@ -21,6 +21,7 @@ export class GameApp {
       onLevelUp = () => {},
       onRunEnd = () => {},
       onExtractRequest = () => {},
+      onPointerLockChange = () => {},
     } = {},
   ) {
     this.container = container;
@@ -29,6 +30,7 @@ export class GameApp {
     this.onLevelUp = onLevelUp;
     this.onRunEnd = onRunEnd;
     this.onExtractRequest = onExtractRequest;
+    this.onPointerLockChange = onPointerLockChange;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
@@ -39,7 +41,7 @@ export class GameApp {
     this.renderer.domElement.className = 'game-canvas';
     this.renderer.domElement.setAttribute(
       'aria-label',
-      'Arena 3D: WASD mueve, ratón apunta, Q usa el especial, Shift esquiva, Espacio salta, Esc pausa y 1-3 elige mejoras',
+      'Arena 3D: WASD se mueve según la cámara, ratón con captura mueve la cámara, Q especial (desbloqueable), Shift esquiva (desbloqueable), Espacio salta, Esc pausa y 1-3 elige mejoras',
     );
     this.renderer.domElement.tabIndex = 0;
     this.container.appendChild(this.renderer.domElement);
@@ -47,7 +49,8 @@ export class GameApp {
     this.scene = null;
     this.camera = null;
     this.cameraYaw = Math.PI;
-    this.cameraFollowTimer = 0;
+    this.cameraPitch = CAMERA_RIG.defaultPitch;
+    this.mouseSensitivity = MOUSE_LOOK.defaultSensitivity;
     this.player = null;
     this.playerBodyMaterial = null;
     this.playerRing = null;
@@ -74,8 +77,9 @@ export class GameApp {
     window.addEventListener('resize', this.handleResize);
   }
 
-  start(runConfig) {
+  start(runConfig, { mouseSensitivity = this.mouseSensitivity } = {}) {
     this.stop();
+    this.mouseSensitivity = normalizeSensitivity(mouseSensitivity);
     this.runConfig = runConfig;
     this.session = new RunSession(runConfig, {
       worldLimit: WORLD_LIMIT,
@@ -98,11 +102,17 @@ export class GameApp {
 
     this.controls = new HybridControls({
       element: this.renderer.domElement,
-      camera: this.camera,
-      player: this.player,
-      onPrimaryFire: () => {},
-      onJump: () => {},
-      onDash: () => {},
+      cameraYaw: this.cameraYaw,
+      cameraPitch: this.cameraPitch,
+      mouseSensitivity: this.mouseSensitivity,
+      onPointerLockChange: (locked, details) => this.onPointerLockChange(locked, details),
+      onCameraLook: ({ yaw, pitch }) => {
+        this.cameraYaw = yaw;
+        this.cameraPitch = pitch;
+      },
+      canUseSpecial: () => Boolean(this.session?.unlockedSkills.special),
+      canUseDash: () => Boolean(this.session?.unlockedSkills.dash),
+      onLockedAbility: () => {},
       onPause: () => {
         if (this.session?.isPausedForChoice) return;
         this.setPaused(!this.paused);
@@ -125,6 +135,7 @@ export class GameApp {
 
     this.camera = new THREE.PerspectiveCamera(CAMERA_RIG.fov, window.innerWidth / window.innerHeight, 0.1, 180);
     this.cameraYaw = Math.PI;
+    this.cameraPitch = CAMERA_RIG.defaultPitch;
 
     const ambient = new THREE.HemisphereLight('#d6f4dc', '#304437', 2.25);
     this.scene.add(ambient);
@@ -198,27 +209,48 @@ export class GameApp {
       emissive: starter.color,
       emissiveIntensity: 0.14,
     });
-    const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.58, 1), this.playerBodyMaterial);
-    body.position.y = 0.72;
-    body.scale.set(1, 0.95, 0.9);
+    // Familiar elemental original: malla construida con geometría procedural propia,
+    // sin modelos GLB/GLTF, texturas ni siluetas extraídas de juegos.
+    const body = new THREE.Mesh(new THREE.DodecahedronGeometry(0.56, 1), this.playerBodyMaterial);
+    body.position.y = 0.73;
+    body.scale.set(0.92, 0.88, 1.12);
     this.player.add(body);
 
-    const crestMaterial = new THREE.MeshStandardMaterial({
+    const accentMaterial = new THREE.MeshStandardMaterial({
       color: starter.accent,
-      roughness: 0.28,
+      roughness: 0.26,
+      metalness: 0.16,
       emissive: starter.accent,
-      emissiveIntensity: 0.18,
+      emissiveIntensity: 0.24,
     });
-    const crest = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.4, 5), crestMaterial);
-    crest.position.set(0, 0.74, 0.55);
-    crest.rotation.x = Math.PI / 2;
+    const crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), accentMaterial);
+    crest.position.set(0, 1.27, -0.05);
+    crest.scale.set(0.76, 1.35, 0.7);
     this.player.add(crest);
 
-    const orbit = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.12, 0),
+    for (const side of [-1, 1]) {
+      const fin = new THREE.Mesh(new THREE.TetrahedronGeometry(0.28, 0), accentMaterial);
+      fin.position.set(side * 0.49, 0.78, -0.02);
+      fin.rotation.z = side * -0.42;
+      fin.rotation.y = side * 0.22;
+      fin.scale.set(0.8, 1.15, 0.55);
+      this.player.add(fin);
+    }
+
+    const core = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.22, 0),
       new THREE.MeshStandardMaterial({ color: '#fff1b5', emissive: '#ffcf67', emissiveIntensity: 0.8 }),
     );
-    orbit.position.set(0.63, 1.04, 0);
+    core.position.set(0, 0.76, -0.51);
+    this.player.add(core);
+
+    const orbit = new THREE.Mesh(
+      new THREE.TorusGeometry(0.68, 0.018, 5, 28),
+      new THREE.MeshBasicMaterial({ color: starter.accent, transparent: true, opacity: 0.62 }),
+    );
+    orbit.position.y = 0.75;
+    orbit.rotation.x = Math.PI / 2.4;
+    orbit.rotation.z = -0.38;
     this.player.add(orbit);
 
     this.scene.add(this.player);
@@ -254,11 +286,12 @@ export class GameApp {
   performDash() {
     if (!this.running || this.paused || !this.session || this.session.status !== 'running') return;
     const movement = this.controls?.getMovementVector(this.cameraYaw);
+    const aim = this.controls?.getAimDirection() ?? { x: 0, z: -1 };
     let dirX = movement?.x ?? 0;
     let dirZ = movement?.z ?? 0;
-    if (Math.hypot(dirX, dirZ) < 0.001 && this.controls) {
-      dirX = this.controls.aimDirection.x;
-      dirZ = this.controls.aimDirection.z;
+    if (Math.hypot(dirX, dirZ) < 0.001) {
+      dirX = aim.x;
+      dirZ = aim.z;
     }
     const result = this.session.dash({ x: dirX, z: dirZ });
     if (result.ok) {
@@ -266,6 +299,12 @@ export class GameApp {
       this.player.position.set(this.session.player.x, this.height, this.session.player.z);
       this.emitHudUpdate(true);
     }
+  }
+
+  setMouseSensitivity(value) {
+    this.mouseSensitivity = normalizeSensitivity(value);
+    this.controls?.setMouseSensitivity(this.mouseSensitivity);
+    return this.mouseSensitivity;
   }
 
   /** Solicita retirada táctica desde el menú de pausa. */
@@ -329,10 +368,11 @@ export class GameApp {
     this.height = Math.max(0, this.height + this.verticalVelocity * delta);
     if (this.height === 0) this.verticalVelocity = 0;
 
-    this.controls.updateAim();
-    // Movimiento relativo a la cámara de tercera persona (W avanza hacia donde se mira)
+    this.cameraYaw = this.controls.cameraYaw;
+    this.cameraPitch = this.controls.cameraPitch;
+    // WASD usa siempre el yaw de la cámara capturado con Pointer Lock.
     const movement = this.controls.getMovementVector(this.cameraYaw);
-    const aimDirection = this.controls.aimDirection;
+    const aimDirection = this.controls.getAimDirection();
     const specialPressed = this.controls.consumeSpecialRequest();
 
     // Consumir el dash solicitado desde el teclado (Shift)
@@ -386,20 +426,16 @@ export class GameApp {
       }
     }
 
-    this.controls.updateAim();
-    this.targetMarker.position.set(this.controls.aimPoint.x, 0.035, this.controls.aimPoint.z);
+    this.targetMarker.position.set(
+      this.session.player.x + aimDirection.x * 6.5,
+      0.035,
+      this.session.player.z + aimDirection.z * 6.5,
+    );
 
     this.playerShadow.position.set(this.player.position.x, 0.015, this.player.position.z);
     this.playerShadow.material.opacity = 0.42 - clamp01(this.height / 5) * 0.22;
     this.playerRing.rotation.z += delta * 0.55;
 
-    // La cámara sigue al apuntado solo mientras el cursor se mueve (y fuera de la zona muerta)
-    const cursorMoved = this.controls.consumePointerMoved();
-    this.cameraFollowTimer = nextFollowTimer(this.cameraFollowTimer, cursorMoved, delta);
-    if (this.cameraFollowTimer > 0) {
-      const aimYaw = Math.atan2(aimDirection.x, aimDirection.z);
-      this.cameraYaw = followCameraYaw(this.cameraYaw, aimYaw, delta);
-    }
     this.updateCamera(delta);
 
     this.syncEnemies(delta);
@@ -409,6 +445,7 @@ export class GameApp {
 
     if (events.leveledUp && this.session.status === 'level-up') {
       this.controls.clearKeys();
+      this.controls.releasePointerLock();
       this.spawnLevelUpEffect('#ffe07d');
       this.onLevelUp(this.session.pendingChoices);
     }
@@ -425,6 +462,8 @@ export class GameApp {
       { x: this.player.position.x, z: this.player.position.z },
       this.cameraYaw,
       this.height,
+      CAMERA_RIG,
+      this.cameraPitch,
     );
     const desired = new THREE.Vector3(pose.position.x, pose.position.y, pose.position.z);
     if (snap) {
@@ -958,7 +997,9 @@ export class GameApp {
       snapshot.eliteKills,
       snapshot.orbsCollected,
       snapshot.activeEnemies,
+      snapshot.dashUnlocked ? 'dash-open' : 'dash-locked',
       snapshot.dashReady ? '1' : '0',
+      snapshot.specialAttack?.unlocked ? 'special-open' : 'special-locked',
       Math.round((snapshot.dashCooldown ?? 0) * 10) / 10,
       Math.round((snapshot.basicAttack?.cooldownRemaining ?? 0) * 10),
       Math.round((snapshot.specialAttack?.cooldownRemaining ?? 0) * 10),
@@ -992,7 +1033,10 @@ export class GameApp {
   setPaused(paused) {
     if (!this.running || this.paused === paused) return;
     this.paused = paused;
-    if (paused) this.controls?.clearKeys();
+    if (paused) {
+      this.controls?.clearKeys();
+      this.controls?.releasePointerLock();
+    }
     // Una pulsación de Q hecha durante la pausa no debe disparar el especial al reanudar
     this.controls?.consumeSpecialRequest();
     this.onPauseChange(paused);

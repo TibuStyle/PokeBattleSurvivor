@@ -1,5 +1,30 @@
 # Notas de Parche — PokeBattle Survivor
 
+## v0.5.0 — Pointer Lock, habilidades desbloqueables y HUD de campo
+
+Esta actualización parte del árbol publicado en `main` (que ya contiene v0.4.0), no de la rama histórica v0.1. Conserva los sistemas de v0.3 y posteriores: oleadas, élites, centinela/jefe, orbes, STAB/efectividad, retirada, mejoras permanentes y elección de tres cartas.
+
+### 1. Controles y cámara
+- Pointer Lock captura el ratón al hacer clic en la arena; movimiento relativo del ratón controla yaw/pitch detrás del compañero. `Esc` libera el cursor y pausa.
+- WASD/flechas siguen el yaw de cámara. El cuerpo gira suavemente hacia el vector de movimiento o ataque; el ratón no aplica un giro instantáneo al Pokémon.
+- Nueva sensibilidad ajustable (0,4×–2,4×), persistente en el navegador y modificable desde Guía o desde Pausa.
+
+### 2. Progresión de habilidades
+- Al iniciar solo está activo el básico automático. `Q` (especial) y `Shift` (esquiva) se muestran bloqueados y no responden a entrada ni a llamadas de la simulación hasta desbloquearse.
+- Los desbloqueos pendientes se ofrecen entre las tres opciones de subida de nivel. Se conserva la elección de tres mejoras distintas y se elige solo una por nivel.
+- Tras desbloquear Q aparecen mejoras dedicadas de daño, alcance y enfriamiento. Tras desbloquear Shift, Impulso Etéreo aumenta distancia y reduce enfriamiento.
+
+### 3. Interfaz y assets
+- Nueva Guía de campo con controles, progresión y sensibilidad; selección de inicial, Pokédex y HUD indican explícitamente el estado bloqueado.
+- Se mantiene una interfaz responsive y se amplía la lectura de habilidades, cooldowns, mejoras y captura del ratón.
+- No se incorporan GLB/GLTF ni texturas externas: la escena usa geometría procedural propia. No se usaron recursos de PokéSurvivor ni extracciones comerciales. Como no se verificó una licencia redistribuible específica para modelos de criatura, se optó por no descargarlos; ver `ASSET_LICENSES.md`.
+
+### 4. Pruebas
+- Añadidas pruebas de bloqueo/desbloqueo, opciones de nivel, mejoras de daño/alcance/cooldown y esquiva.
+- Nuevas comprobaciones de sensibilidad, pitch de cámara y giro angular suave.
+
+---
+
 ## v0.4.0 — Movimientos propios, tipos, especial con Q y cámara de tercera persona
 
 Esta versión sustituye el Psicorrayo común por un conjunto de movimientos propios para cada inicial, añade tipos con efectividad y STAB, y lleva la cámara detrás del compañero.
