@@ -1,8 +1,8 @@
 # PokeBattle Survivor — prototipo 3D
 
-Un primer vertical slice para un action roguelite de hordas en navegador. El objetivo de esta iteración es validar **flujo de región → inicial → partida**, una escena 3D ligera y el control híbrido antes de añadir el combate completo, enemigos, experiencia o modelos finales.
+Un action roguelite de hordas en navegador al estilo *Vampire Survivors*. El vertical slice actual (v0.3) incluye **flujo de región → inicial → partida**, disparo automático de Psicorrayo, hordas con enemigos élite, un centinela a los 4 minutos, jefe regional a los ~10 minutos, orbes de XP, elección de 1 entre 3 mejoras por nivel, esquiva (`Shift`) y retirada táctica.
 
-> La escena usa una criatura geométrica original como placeholder; no incluye modelos ni texturas extraídas de Pokémon.
+> La escena usa criaturas geométricas originales como placeholder; no incluye modelos ni texturas extraídas de Pokémon.
 
 ## Ejecutar en local
 
@@ -27,10 +27,10 @@ npm run preview
 - Selección gratuita de un inicial la primera vez que se abre cada región; la elección queda guardada en `localStorage` y no se puede volver a reclamar como gratuita.
 - Flujo independiente del render: elegir región → elegir inicial → entrar a partida → informe de expedición.
 - Escena Three.js en perspectiva isométrica suave, con bosque procedural, compañero geométrico, hordas regionales y orbes de experiencia 3D.
-- `WASD` o flechas para moverse, ratón para apuntar sobre el suelo 3D, clic izquierdo (o mantener pulsado) para disparar `Psicorrayo` con daño, perforación y empuje, `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
-- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`) y aparición del jefe regional (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`).
-- Sistema de vida (`PS`) con ventana de gracia tras recibir contacto, retiro táctico con botín desde la pausa y pantalla de resultados con recompensas reales (monedas, tickets y gemas).
-- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Psíquico`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`).
+- `WASD` o flechas para moverse, ratón para apuntar sobre el suelo 3D, **disparo automático** de `Psicorrayo`, `Shift` para **esquivar** (con invulnerabilidad breve), `Espacio` para saltar, `1-3` para elegir mejoras de nivel y `Esc` para pausar.
+- Hordas por oleadas con especies por región (`Caterpie`, `Weedle`, `Spinarak`, `Hoothoot`, `Poochyena`, `Numel`), **enemigos élite** con auras (Celeridad/Masa/Furia) desde la oleada 3, un **centinela regional** a los 4 minutos como hito y el **jefe regional** (`Mewtwo`, `Ho-Oh / Lugia`, `Groudon`) tras derrotar al centinela.
+- Sistema de vida (`PS`) con ventana de gracia tras recibir contacto, **retiro táctico** con botín parcial desde la pausa y pantalla de resultados con recompensas reales (monedas, tickets y gemas).
+- Orbes de XP con atracción magnética y subida de nivel con elección de **una entre tres mejoras** (`Foco Psíquico`, `Pulso Mental`, `Prisma Psíquico`, `Onda Telequinética`, `Cuerpo Resiliente`, `Paso Ligero`, `Atracción Astral`, **Impulso Etéreo** para la esquiva).
 - Pokédex de los nueve iniciales regionales, pantalla de mejoras permanentes conectada a las estadísticas de combate y escaparate del gachapón con las probabilidades del GDD.
 - Persistencia local con normalización defensiva del perfil y notas de versión en [`PATCH_NOTES.md`](./PATCH_NOTES.md).
 - Pruebas de Node para flujo regional, hordas, daño de `Psicorrayo`, vida, orbes de XP y elección de mejoras.
@@ -46,19 +46,20 @@ src/
   data/
     regions.js               # regiones, jefes, enemigos e iniciales
     economy.js               # rarezas y tabla de mejoras permanentes
-    combat.js                # perfiles de hordas, Psicorrayo y mejoras 1 de 3
+    combat.js                # perfiles de hordas, élites, centinelas, Psicorrayo y mejoras
   flow/
     ProfileStore.js          # perfil persistente, con validación/migración básica
     RegionFlow.js            # state machine independiente de Three/DOM
   menu/
-    MenuController.js        # mapa, Pokédex, mejoras, gacha, HUD y modal de nivel
+    MenuController.js        # mapa, Pokédex, mejoras, gacha, HUD, centinela/jefe y modal de nivel
   game/
-    RunSession.js            # simulación pura v0.2: hordas, daño, PS, XP y mejoras
-    GameApp.js               # escena Three.js, loop, cámara, enemigos, orbes y efectos
-    HybridControls.js        # teclado, raycast del mouse, salto, pausa y atajos 1-3
+    RunSession.js            # simulación pura v0.3: hordas, élites, centinela, dash, PS, XP y mejoras
+    GameApp.js               # escena Three.js, loop, cámara, enemigos, orbes, auras y efectos
+    HybridControls.js        # teclado, raycast del ratón, salto, esquiva (Shift), pausa y atajos 1-3
 tests/
   region-flow.test.js
   combat-v02.test.js
+  combat-v03.test.js
 ```
 
 **Regla de dependencia:** el menú no importa Three.js. `RegionFlow` devuelve un `runConfig` serializable; `GameApp` consume esa configuración. Así se puede sustituir el motor o probar el flujo en Node sin abrir WebGL.
@@ -149,6 +150,11 @@ Para WebGL usa GLB/glTF, una textura atlas por criatura cuando sea posible, rigs
 
 ## GitHub Pages
 
-`npm run build` genera `dist/`, y `vite.config.js` configura `/PokeBattleSurvivor/` como base durante un build de Actions y `/` en local. En **Settings → Pages** puedes seleccionar **GitHub Actions** y publicar `dist/`. Si el repositorio cambia de nombre, actualiza la ruta en `vite.config.js`.
+`npm run build` genera `dist/`, y `vite.config.js` configura `/PokeBattleSurvivor/` como base durante un build de Actions y `/` en local. El repositorio incluye `.github/workflows/deploy.yml`, que en cada push a `main`:
 
-Este PR no incluye un workflow de despliegue automático: el GitHub App conectado no autorizó crear/modificar archivos de Actions sin el permiso `workflows`. Para añadir ese workflow, reconecta GitHub en Arena con el permiso correspondiente o agrégalo después desde una integración autorizada.
+1. Instala dependencias con `npm ci`.
+2. Ejecuta `npm test`.
+3. Ejecuta `npm run build`.
+4. Publica el contenido de `dist/` en GitHub Pages usando `actions/deploy-pages`.
+
+En **Settings → Pages** asegúrate de que **Source** esté en **GitHub Actions** (no en una rama). Si el repositorio cambia de nombre, actualiza la ruta en `vite.config.js`.

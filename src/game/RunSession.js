@@ -4,19 +4,24 @@ import {
   PSYBEAM_BASE,
   RUN_UPGRADES,
   getBossProfile,
+  getEliteAura,
   getEnemyProfile,
+  getMiniBossProfile,
   getXpForNextLevel,
 } from '../data/combat.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 /**
- * Simulación pura de una partida v0.2:
- * - Hordas por oleadas y jefe regional
- * - Psicorrayo con daño, enfriamiento, perforación y empuje
+ * Simulación pura de una partida v0.3:
+ * - Hordas por oleadas con enemigos élite y jefe regional
+ * - Minijefe a los 4 minutos como hito intermedio
+ * - Psicorrayo automático con daño, enfriamiento, perforación y empuje
  * - Sistema de vida (PS), daño por contacto y ventana de gracia
  * - Orbes de experiencia con imán y recogida
- * - Subida de nivel con elección de 1 entre 3 mejoras
+ * - Subida de nivel con elección de 1 entre 3 mejoras (ahora incluye esquiva)
+ * - Esquiva/dash (Shift) con invulnerabilidad y enfriamiento
+ * - Retirada táctica que conserva una fracción de recompensas
  *
  * No depende de Three.js ni del DOM para poder probarse en Node.
  */
@@ -39,6 +44,9 @@ export class RunSession {
     this.bossSpawnSeconds = Number.isFinite(options.bossSpawnSeconds)
       ? options.bossSpawnSeconds
       : HORDE_CONFIG.bossSpawnSeconds;
+    this.miniBossSpawnSeconds = Number.isFinite(options.miniBossSpawnSeconds)
+      ? options.miniBossSpawnSeconds
+      : HORDE_CONFIG.miniBossSpawnSeconds;
     this.maxActiveEnemies = Number.isFinite(options.maxActiveEnemies)
       ? options.maxActiveEnemies
       : HORDE_CONFIG.maxActiveEnemies;
@@ -63,23 +71,33 @@ export class RunSession {
       invulnerableTimer: 0,
       hitFlash: 0,
       alive: true,
+      dashTimer: 0,
+      dashCooldown: 0,
+      dashDirX: 0,
+      dashDirZ: 0,
+      dashFlash: 0,
     };
 
     this.level = 1;
     this.xp = 0;
     this.xpToNext = getXpForNextLevel(1);
     this.kills = 0;
+    this.eliteKills = 0;
     this.orbsCollected = 0;
     this.totalDamageDealt = 0;
+    this.bonusCoins = 0;
+    this.bonusTickets = 0;
 
     this.pendingLevelUps = 0;
     this.pendingChoices = null;
 
     this.enemies = [];
     this.orbs = [];
+    this.miniBossSpawned = false;
+    this.miniBossDefeated = false;
     this.bossSpawned = false;
     this.bossDefeated = false;
-    this.status = 'running';
+    this.status = 'running'; // running | level-up | victory | defeat | extracted
 
     if (options.spawnInitialWave !== false) {
       const initialCount = Number.isFinite(options.initialEnemies)
@@ -106,6 +124,7 @@ export class RunSession {
     const vitalityRank = inRun.vitalityBoost ?? 0;
     const agileRank = inRun.agileStep ?? 0;
     const magnetRank = inRun.auraMagnet ?? 0;
+    const dashRank = inRun.dashFlow ?? 0;
 
     const maxHp = Math.round(
       BASE_PLAYER_STATS.maxHp * (1 + permHealthRank * 0.05) + vitalityRank * 25,
@@ -120,6 +139,8 @@ export class RunSession {
     const xpMultiplier = (1 + permXpRank * 0.02) * (1 + magnetRank * 0.15);
 
     const cooldownFactor = Math.max(0.28, (1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank));
+    const dashCooldown = BASE_PLAYER_STATS.dashCooldownSeconds * Math.pow(0.8, dashRank);
+    const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
 
     return {
       maxHp,
@@ -127,6 +148,12 @@ export class RunSession {
       magnetRadius,
       pickupRadius,
       xpMultiplier,
+      dash: {
+        distance: dashDistance,
+        duration: BASE_PLAYER_STATS.dashDurationSeconds,
+        cooldown: dashCooldown,
+        invulnerability: BASE_PLAYER_STATS.dashInvulnerabilitySeconds,
+      },
       psybeam: {
         name: PSYBEAM_BASE.name,
         damage: Math.round(PSYBEAM_BASE.damage * (1 + powerRank * 0.25)),
@@ -147,11 +174,15 @@ export class RunSession {
   }
 
   get isFinished() {
-    return this.status === 'victory' || this.status === 'defeat';
+    return this.status === 'victory' || this.status === 'defeat' || this.status === 'extracted';
   }
 
   get activeBoss() {
     return this.enemies.find((enemy) => enemy.isBoss) ?? null;
+  }
+
+  get activeMiniBoss() {
+    return this.enemies.find((enemy) => enemy.isMiniBoss) ?? null;
   }
 
   spawnEnemy(overrides = {}) {
@@ -178,18 +209,38 @@ export class RunSession {
       z = clamp(this.player.z + Math.sin(angle) * radius, -this.worldLimit + 1, this.worldLimit - 1);
     }
 
-    const maxHp = Math.max(1, Math.round((overrides.hp ?? profile.hp) * waveScale));
+    // Élites a partir de la oleada configurada
+    const isElite = overrides.isElite === true
+      || (overrides.isElite !== false
+        && this.wave >= HORDE_CONFIG.eliteStartWave
+        && this.random() < HORDE_CONFIG.eliteChancePerWave
+        && !overrides.isBoss
+        && !overrides.isMiniBoss);
+
+    const aura = isElite ? getEliteAura(overrides.auraId) : null;
+    const hpMult = aura?.hpMultiplier ?? 1;
+    const spdMult = aura?.speedMultiplier ?? 1;
+    const dmgMult = aura?.damageMultiplier ?? 1;
+    const xpMult = aura?.xpMultiplier ?? 1;
+
+    const maxHp = Math.max(1, Math.round((overrides.hp ?? profile.hp) * waveScale * hpMult));
     const enemy = {
       id: `enemy-${this.nextEntityId++}`,
       species: profile.name,
+      isElite: false,
+      isMiniBoss: false,
       isBoss: false,
+      aura: null,
       x,
       z,
       hp: maxHp,
       maxHp,
-      speed: (overrides.speed ?? profile.speed) * speedScale,
-      contactDamage: Math.max(1, Math.round((overrides.contactDamage ?? profile.contactDamage) * (1 + (this.wave - 1) * 0.08))),
-      xpValue: overrides.xpValue ?? profile.xp,
+      speed: (overrides.speed ?? profile.speed) * speedScale * spdMult,
+      contactDamage: Math.max(
+        1,
+        Math.round((overrides.contactDamage ?? profile.contactDamage) * (1 + (this.wave - 1) * 0.08) * dmgMult),
+      ),
+      xpValue: Math.round((overrides.xpValue ?? profile.xp) * xpMult),
       radius: overrides.radius ?? profile.radius,
       color: overrides.color ?? profile.color,
       accent: overrides.accent ?? profile.accent,
@@ -200,8 +251,57 @@ export class RunSession {
       rotationY: 0,
     };
 
+    if (isElite && aura) {
+      enemy.isElite = true;
+      enemy.aura = { id: aura.id, name: aura.name, color: aura.color };
+      enemy.radius = (enemy.radius ?? 0.5) * 1.18;
+    }
+
     this.enemies.push(enemy);
     return enemy;
+  }
+
+  spawnMiniBoss(overrides = {}) {
+    const profile = getMiniBossProfile(this.runConfig.regionId);
+    const angle = Number.isFinite(overrides.angle) ? overrides.angle : this.random() * Math.PI * 2;
+    const distance = Number.isFinite(overrides.distance) ? overrides.distance : 14;
+    const x = Number.isFinite(overrides.x)
+      ? overrides.x
+      : clamp(this.player.x + Math.cos(angle) * distance, -this.worldLimit + 2, this.worldLimit - 2);
+    const z = Number.isFinite(overrides.z)
+      ? overrides.z
+      : clamp(this.player.z + Math.sin(angle) * distance, -this.worldLimit + 2, this.worldLimit - 2);
+
+    const maxHp = Math.max(1, Math.round(overrides.hp ?? profile.hp));
+    const miniBoss = {
+      id: `miniboss-${this.nextEntityId++}`,
+      species: profile.name,
+      isElite: false,
+      isMiniBoss: true,
+      isBoss: false,
+      aura: { id: 'sentinel', name: 'Centinela', color: profile.accent },
+      x,
+      z,
+      hp: maxHp,
+      maxHp,
+      speed: overrides.speed ?? profile.speed,
+      contactDamage: overrides.contactDamage ?? profile.contactDamage,
+      xpValue: overrides.xpValue ?? profile.xp,
+      radius: overrides.radius ?? profile.radius,
+      color: overrides.color ?? profile.color,
+      accent: overrides.accent ?? profile.accent,
+      shape: 'miniboss',
+      hitFlash: 0,
+      knockbackX: 0,
+      knockbackZ: 0,
+      rotationY: 0,
+      rewardCoins: profile.rewardCoins,
+      rewardTickets: profile.rewardTickets,
+    };
+
+    this.miniBossSpawned = true;
+    this.enemies.push(miniBoss);
+    return miniBoss;
   }
 
   spawnBoss(overrides = {}) {
@@ -219,7 +319,10 @@ export class RunSession {
     const boss = {
       id: `boss-${this.nextEntityId++}`,
       species: profile.name,
+      isElite: false,
+      isMiniBoss: false,
       isBoss: true,
+      aura: null,
       x,
       z,
       hp: maxHp,
@@ -359,7 +462,7 @@ export class RunSession {
 
         enemy.hp = Math.max(0, enemy.hp - damage);
         enemy.hitFlash = 0.18;
-        const kbFactor = enemy.isBoss ? 0.35 : 1;
+        const kbFactor = enemy.isBoss ? 0.35 : (enemy.isMiniBoss ? 0.55 : 1);
         enemy.knockbackX += rayX * knockback * kbFactor;
         enemy.knockbackZ += rayZ * knockback * kbFactor;
         this.totalDamageDealt += damage;
@@ -367,6 +470,9 @@ export class RunSession {
         hits.push({
           enemyId: enemy.id,
           species: enemy.species,
+          isElite: !!enemy.isElite,
+          isMiniBoss: !!enemy.isMiniBoss,
+          isBoss: !!enemy.isBoss,
           x: enemy.x,
           z: enemy.z,
           damage,
@@ -382,19 +488,37 @@ export class RunSession {
 
       this.enemies.splice(index, 1);
       this.kills += 1;
+      if (enemy.isElite) this.eliteKills += 1;
+
       const orb = this.spawnOrb({
         x: enemy.x,
         z: enemy.z,
         value: enemy.xpValue,
       });
+
+      let bonusCoins = 0;
+      let bonusTickets = 0;
+      if (enemy.isMiniBoss) {
+        this.miniBossDefeated = true;
+        bonusCoins = enemy.rewardCoins ?? 40;
+        bonusTickets = enemy.rewardTickets ?? 1;
+        this.bonusCoins += bonusCoins;
+        this.bonusTickets += bonusTickets;
+      }
+
       defeated.push({
         enemyId: enemy.id,
         species: enemy.species,
-        isBoss: enemy.isBoss,
+        isElite: !!enemy.isElite,
+        isMiniBoss: !!enemy.isMiniBoss,
+        isBoss: !!enemy.isBoss,
         x: enemy.x,
         z: enemy.z,
         color: enemy.color,
+        aura: enemy.aura,
         orbId: orb.id,
+        bonusCoins,
+        bonusTickets,
       });
 
       if (enemy.isBoss) {
@@ -411,9 +535,59 @@ export class RunSession {
     };
   }
 
+  dash(direction = { x: 0, z: 0 }) {
+    if (this.status !== 'running' || !this.player.alive) return { ok: false, reason: 'not-running' };
+    if (this.player.dashCooldown > 0 || this.player.dashTimer > 0) return { ok: false, reason: 'cooldown' };
+
+    let dx = Number(direction.x) || 0;
+    let dz = Number(direction.z) || 0;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.0001) {
+      // Si no hay dirección de movimiento, dashea hacia la orientación actual
+      dx = Math.sin(this.player.rotationY);
+      dz = Math.cos(this.player.rotationY);
+    } else {
+      dx /= len;
+      dz /= len;
+    }
+
+    this.player.dashDirX = dx;
+    this.player.dashDirZ = dz;
+    this.player.dashTimer = this.stats.dash.duration;
+    this.player.dashCooldown = this.stats.dash.cooldown;
+    this.player.invulnerableTimer = Math.max(
+      this.player.invulnerableTimer,
+      this.stats.dash.invulnerability,
+    );
+    this.player.dashFlash = 0.22;
+
+    // Aplicar el desplazamiento inmediato (el bucle ajustará el resto con arrastre)
+    const instantPortion = 0.7;
+    this.player.x = clamp(
+      this.player.x + dx * this.stats.dash.distance * instantPortion,
+      -this.worldLimit,
+      this.worldLimit,
+    );
+    this.player.z = clamp(
+      this.player.z + dz * this.stats.dash.distance * instantPortion,
+      -this.worldLimit,
+      this.worldLimit,
+    );
+
+    return {
+      ok: true,
+      dirX: dx,
+      dirZ: dz,
+      distance: this.stats.dash.distance,
+      cooldown: this.stats.dash.cooldown,
+    };
+  }
+
   damagePlayer(amount, sourceEnemy = null) {
     if (!this.player.alive || this.status !== 'running') return { damaged: false, hp: this.player.hp };
-    if (this.player.invulnerableTimer > 0) return { damaged: false, reason: 'invulnerable', hp: this.player.hp };
+    if (this.player.invulnerableTimer > 0 || this.player.dashTimer > 0) {
+      return { damaged: false, reason: 'invulnerable', hp: this.player.hp };
+    }
 
     const safeDamage = Math.max(1, Math.round(Number(amount) || 0));
     this.player.hp = Math.max(0, this.player.hp - safeDamage);
@@ -440,6 +614,14 @@ export class RunSession {
       hp: this.player.hp,
       defeated: !this.player.alive,
     };
+  }
+
+  /** Inicia la retirada táctica. Conserva el botín acumulado sin victoria. */
+  extract() {
+    if (this.isFinished) return { ok: false, reason: 'already-finished', status: this.status };
+    this.status = 'extracted';
+    this.player.alive = false;
+    return { ok: true, status: this.status };
   }
 
   gainXp(rawAmount) {
@@ -559,12 +741,18 @@ export class RunSession {
       defeated: [],
       orbsPicked: [],
       playerDamaged: null,
+      playerDashed: null,
       leveledUp: false,
+      miniBossSpawned: null,
       bossSpawned: null,
     };
 
     const dt = Math.max(0, Number(delta) || 0);
-    if (dt === 0 || this.status !== 'running' || !this.player.alive) {
+    if (dt === 0 || this.isFinished) {
+      return events;
+    }
+    // En pausa por elección no actualizamos el mundo, pero sí devolvemos snapshot
+    if (this.status === 'level-up') {
       return events;
     }
 
@@ -572,12 +760,37 @@ export class RunSession {
     this.psybeamCooldown = Math.max(0, this.psybeamCooldown - dt);
     this.player.invulnerableTimer = Math.max(0, this.player.invulnerableTimer - dt);
     this.player.hitFlash = Math.max(0, this.player.hitFlash - dt);
+    this.player.dashFlash = Math.max(0, this.player.dashFlash - dt);
+
+    // Dash: aplicar la parte residual del desplazamiento con arrastre
+    if (this.player.dashTimer > 0) {
+      const dashPortion = Math.min(1, dt / Math.max(0.001, this.stats.dash.duration));
+      const residual = this.stats.dash.distance * 0.3;
+      this.player.x = clamp(
+        this.player.x + this.player.dashDirX * residual * dashPortion,
+        -this.worldLimit,
+        this.worldLimit,
+      );
+      this.player.z = clamp(
+        this.player.z + this.player.dashDirZ * residual * dashPortion,
+        -this.worldLimit,
+        this.worldLimit,
+      );
+      this.player.dashTimer = Math.max(0, this.player.dashTimer - dt);
+    }
+    this.player.dashCooldown = Math.max(0, this.player.dashCooldown - dt);
+
+    // Acción de esquiva solicitada por el jugador
+    if (input.dashPressed) {
+      const dashResult = this.dash(input.movement);
+      if (dashResult.ok) events.playerDashed = dashResult;
+    }
 
     // Movimiento del jugador
     const moveX = Number(input.movement?.x) || 0;
     const moveZ = Number(input.movement?.z) || 0;
     const moveLen = Math.hypot(moveX, moveZ);
-    if (moveLen > 0.0001) {
+    if (moveLen > 0.0001 && this.player.dashTimer <= 0) {
       const normX = moveLen > 1 ? moveX / moveLen : moveX;
       const normZ = moveLen > 1 ? moveZ / moveLen : moveZ;
       this.player.x = clamp(this.player.x + normX * this.stats.moveSpeed * dt, -this.worldLimit, this.worldLimit);
@@ -596,25 +809,33 @@ export class RunSession {
       }
     }
 
-    // Disparo continuo si el jugador mantiene pulsado el ataque
-    if (input.primaryFireHeld && this.psybeamCooldown <= 0) {
-      const fireResult = this.firePsybeam(input.aimDirection ?? { x: 0, z: -1 });
+    // Disparo automático del Psicorrayo cuando no está en enfriamiento
+    if (this.psybeamCooldown <= 0) {
+      const aim = input.aimDirection ?? { x: Math.sin(this.player.rotationY), z: Math.cos(this.player.rotationY) };
+      const fireResult = this.firePsybeam(aim, { force: true });
       if (fireResult.fired) {
         events.beams.push(...fireResult.beams);
         events.hits.push(...fireResult.hits);
         events.defeated.push(...fireResult.defeated);
       }
-      if (this.status !== 'running') return events;
+      if (this.isFinished) return events;
     }
 
-    // Progresión de oleadas y aparición de la horda
+    // Progresión de oleadas
     const nextWave = 1 + Math.floor(this.elapsedSeconds / HORDE_CONFIG.waveDurationSeconds);
     if (nextWave > this.wave) {
       this.wave = nextWave;
       this.spawnHordeWave(2 + Math.min(4, this.wave));
     }
 
-    if (!this.bossSpawned && this.elapsedSeconds >= this.bossSpawnSeconds) {
+    // Minijefe al alcanzar el hito configurado (solo una vez por partida)
+    if (!this.miniBossSpawned && this.elapsedSeconds >= this.miniBossSpawnSeconds) {
+      events.miniBossSpawned = this.spawnMiniBoss();
+    }
+
+    // Jefe regional tras derrotar al minijefe o alcanzar el tiempo final
+    const bossReady = this.miniBossDefeated || this.elapsedSeconds >= this.bossSpawnSeconds;
+    if (!this.bossSpawned && bossReady && this.elapsedSeconds >= this.miniBossSpawnSeconds + 30) {
       events.bossSpawned = this.spawnBoss();
     }
 
@@ -631,11 +852,9 @@ export class RunSession {
       }
     }
 
-    // Movimiento, separación y colisión de los enemigos
     this.#updateEnemies(dt, events);
-    if (this.status !== 'running') return events;
+    if (this.isFinished) return events;
 
-    // Imán y recogida de orbes de experiencia
     this.#updateOrbs(dt, events);
 
     return events;
@@ -658,7 +877,7 @@ export class RunSession {
       enemy.x += (dirX * enemy.speed + enemy.knockbackX) * dt;
       enemy.z += (dirZ * enemy.speed + enemy.knockbackZ) * dt;
 
-      const decay = Math.exp(-dt * 9);
+      const decay = Math.exp(-dt * (enemy.isBoss ? 4 : 9));
       enemy.knockbackX *= decay;
       enemy.knockbackZ *= decay;
 
@@ -666,7 +885,7 @@ export class RunSession {
       enemy.z = clamp(enemy.z, -this.worldLimit, this.worldLimit);
     }
 
-    // Separación suave entre enemigos para evitar que colapsen en un único punto
+    // Separación suave entre enemigos para evitar apilamiento
     for (let i = 0; i < count; i += 1) {
       const a = this.enemies[i];
       for (let j = i + 1; j < count; j += 1) {
@@ -688,12 +907,12 @@ export class RunSession {
       }
     }
 
-    // Daño por contacto contra el jugador
+    // Daño por contacto
     for (const enemy of this.enemies) {
       const dx = this.player.x - enemy.x;
       const dz = this.player.z - enemy.z;
       const hitDistance = this.player.radius + enemy.radius;
-      const verticalReach = enemy.isBoss ? 1.55 : 0.85;
+      const verticalReach = enemy.isBoss ? 1.55 : (enemy.isMiniBoss ? 1.3 : 0.85);
       if (this.player.height <= verticalReach && dx * dx + dz * dz <= hitDistance * hitDistance) {
         const result = this.damagePlayer(enemy.contactDamage, enemy);
         if (result.damaged) {
@@ -701,6 +920,9 @@ export class RunSession {
             ...result,
             enemyId: enemy.id,
             species: enemy.species,
+            isElite: !!enemy.isElite,
+            isMiniBoss: !!enemy.isMiniBoss,
+            isBoss: !!enemy.isBoss,
           };
           if (!this.player.alive) break;
         }
@@ -758,6 +980,7 @@ export class RunSession {
       }));
 
     const boss = this.activeBoss;
+    const miniBoss = this.activeMiniBoss;
 
     return {
       elapsedSeconds: Math.floor(this.elapsedSeconds),
@@ -769,13 +992,23 @@ export class RunSession {
       xp: this.xp,
       xpToNext: this.xpToNext,
       kills: this.kills,
+      eliteKills: this.eliteKills,
       orbsCollected: this.orbsCollected,
       activeEnemies: this.enemies.length,
       psybeamDamage: this.stats.psybeam.damage,
       psybeamBeams: this.stats.psybeam.beams,
       psybeamCooldown: this.stats.psybeam.cooldown,
+      dashCooldown: this.player.dashCooldown,
+      dashReady: this.player.dashCooldown <= 0 && this.player.dashTimer <= 0,
       activeUpgrades,
       pendingChoices: this.pendingChoices ? [...this.pendingChoices] : null,
+      miniBoss: miniBoss
+        ? {
+            name: miniBoss.species,
+            hp: miniBoss.hp,
+            maxHp: miniBoss.maxHp,
+          }
+        : null,
       boss: boss
         ? {
             name: boss.species,
@@ -788,18 +1021,25 @@ export class RunSession {
 
   buildRunResult() {
     const victory = this.status === 'victory';
+    const extracted = this.status === 'extracted';
     const elapsedSeconds = Math.max(0, Math.floor(this.elapsedSeconds));
-    const coins = Math.max(
+    const timeCoeff = victory ? 0.45 : (extracted ? 0.3 : 0.2);
+    const baseCoins = Math.max(
       6,
-      Math.floor(elapsedSeconds * 0.45) + this.kills * 2 + (this.level - 1) * 6 + (victory ? 70 : 0),
+      Math.floor(elapsedSeconds * timeCoeff) + this.kills * 2 + (this.level - 1) * 6,
     );
-    const tickets = (victory ? 2 : 0) + (this.kills >= 10 || elapsedSeconds >= 45 ? 1 : 0);
+    const coins = baseCoins + this.bonusCoins + (victory ? 70 : 0);
+    const tickets = (victory ? 2 : 0) + this.bonusTickets + ((this.kills >= 10 || elapsedSeconds >= 45) ? 1 : 0);
     const gems = victory ? 1 : 0;
 
     return {
       victory,
+      extracted,
+      defeated: this.status === 'defeat',
       elapsedSeconds,
       kills: this.kills,
+      eliteKills: this.eliteKills,
+      miniBossDefeated: this.miniBossDefeated,
       level: this.level,
       orbsCollected: this.orbsCollected,
       upgrades: { ...this.runUpgrades },

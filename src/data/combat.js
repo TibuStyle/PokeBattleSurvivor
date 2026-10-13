@@ -5,6 +5,10 @@ export const BASE_PLAYER_STATS = {
   pickupRadius: 1.15,
   magnetRadius: 3.8,
   contactGraceSeconds: 0.55,
+  dashDistance: 4.2,
+  dashDurationSeconds: 0.22,
+  dashCooldownSeconds: 2.4,
+  dashInvulnerabilitySeconds: 0.32,
 };
 
 export const PSYBEAM_BASE = {
@@ -26,10 +30,13 @@ export const HORDE_CONFIG = {
   baseSpawnInterval: 2.1,
   minSpawnInterval: 0.55,
   waveDurationSeconds: 20,
-  maxActiveEnemies: 36,
+  maxActiveEnemies: 42,
   spawnMinRadius: 12.5,
   spawnMaxRadius: 19.5,
-  bossSpawnSeconds: 90,
+  miniBossSpawnSeconds: 240,
+  bossSpawnSeconds: 600, // 10 min: jefe final tras el hito del minijefe
+  eliteStartWave: 3,
+  eliteChancePerWave: 0.18,
 };
 
 export const ENEMY_PROFILES = {
@@ -101,6 +108,75 @@ export const ENEMY_PROFILES = {
   },
 };
 
+export const ELITE_AURAS = {
+  swift: {
+    id: 'swift',
+    name: 'Aura de Celeridad',
+    color: '#7be5ff',
+    speedMultiplier: 1.55,
+    hpMultiplier: 1.8,
+    damageMultiplier: 1.0,
+    xpMultiplier: 3.2,
+  },
+  bulk: {
+    id: 'bulk',
+    name: 'Aura de Masa',
+    color: '#ff9f6b',
+    speedMultiplier: 0.78,
+    hpMultiplier: 3.2,
+    damageMultiplier: 1.4,
+    xpMultiplier: 3.8,
+  },
+  fury: {
+    id: 'fury',
+    name: 'Aura de Furia',
+    color: '#ff6b87',
+    speedMultiplier: 1.18,
+    hpMultiplier: 2.2,
+    damageMultiplier: 1.6,
+    xpMultiplier: 3.5,
+  },
+};
+
+export const MINIBOSS_PROFILES = {
+  kanto: {
+    name: 'Onix centinela',
+    hp: 280,
+    speed: 2.35,
+    contactDamage: 18,
+    xp: 80,
+    radius: 0.85,
+    color: '#9ba3ae',
+    accent: '#d9c27a',
+    rewardCoins: 40,
+    rewardTickets: 1,
+  },
+  johto: {
+    name: 'Ursaring centinela',
+    hp: 340,
+    speed: 2.5,
+    contactDamage: 20,
+    xp: 100,
+    radius: 0.88,
+    color: '#b87548',
+    accent: '#f4d37a',
+    rewardCoins: 50,
+    rewardTickets: 1,
+  },
+  hoenn: {
+    name: 'Aggron centinela',
+    hp: 400,
+    speed: 2.4,
+    contactDamage: 22,
+    xp: 120,
+    radius: 0.92,
+    color: '#8291a3',
+    accent: '#6ce0d4',
+    rewardCoins: 60,
+    rewardTickets: 1,
+  },
+};
+
 export const BOSS_PROFILES = {
   Mewtwo: {
     name: 'Mewtwo',
@@ -111,7 +187,6 @@ export const BOSS_PROFILES = {
     radius: 0.95,
     color: '#c9a3f7',
     accent: '#ff7be5',
-    shape: 'boss',
   },
   'Ho-Oh / Lugia': {
     name: 'Ho-Oh / Lugia',
@@ -122,7 +197,6 @@ export const BOSS_PROFILES = {
     radius: 1.0,
     color: '#f49d5b',
     accent: '#7de6e0',
-    shape: 'boss',
   },
   Groudon: {
     name: 'Groudon',
@@ -133,7 +207,6 @@ export const BOSS_PROFILES = {
     radius: 1.08,
     color: '#e05844',
     accent: '#ffd166',
-    shape: 'boss',
   },
 };
 
@@ -194,6 +267,14 @@ export const RUN_UPGRADES = [
     maxRank: 4,
     description: '+35% de radio de imán de orbes y +15% de XP.',
   },
+  {
+    id: 'dashFlow',
+    name: 'Impulso Etéreo',
+    category: 'Movilidad',
+    icon: '➤',
+    maxRank: 3,
+    description: '−20% de enfriamiento de esquiva (Shift) y +15% de distancia.',
+  },
 ];
 
 export function getEnemyProfile(species) {
@@ -205,6 +286,16 @@ export function getBossProfile(bossName) {
     ...BOSS_PROFILES.Mewtwo,
     name: bossName || 'Jefe Regional',
   };
+}
+
+export function getMiniBossProfile(regionId) {
+  return MINIBOSS_PROFILES[regionId] ?? MINIBOSS_PROFILES.kanto;
+}
+
+export function getEliteAura(auraId) {
+  if (auraId && ELITE_AURAS[auraId]) return ELITE_AURAS[auraId];
+  const keys = Object.keys(ELITE_AURAS);
+  return ELITE_AURAS[keys[Math.floor(Math.random() * keys.length)]];
 }
 
 export function getXpForNextLevel(level = 1) {

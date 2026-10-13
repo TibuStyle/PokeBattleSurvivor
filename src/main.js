@@ -20,6 +20,10 @@ async function startGame(runConfig) {
       onHudUpdate: (snapshot) => menu?.updateHud(snapshot),
       onLevelUp: (choices) => menu?.setLevelUpChoices(choices),
       onRunEnd: (result) => menu?.finishRun(result),
+      onExtractRequest: () => {
+        const result = game?.extractCurrentRun();
+        if (result) menu?.finishRun(result);
+      },
     });
   }
   game.start(runConfig);

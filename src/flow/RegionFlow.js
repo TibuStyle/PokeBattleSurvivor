@@ -95,11 +95,14 @@ export class RegionFlow {
    */
   completeRun({
     victory = false,
+    extracted = false,
     elapsedSeconds = 0,
     rewards = {},
     kills = 0,
+    eliteKills = 0,
     level = 1,
     orbsCollected = 0,
+    miniBossDefeated = false,
     upgrades = {},
   } = {}) {
     if (this.screen !== 'run' || !this.activeRun) return null;
@@ -107,6 +110,7 @@ export class RegionFlow {
     const progress = this.profile.regions[this.activeRun.regionId];
     const elapsed = Number.isFinite(Number(elapsedSeconds)) ? Math.max(0, Math.floor(Number(elapsedSeconds))) : 0;
     const safeKills = Number.isFinite(Number(kills)) ? Math.max(0, Math.floor(Number(kills))) : 0;
+    const safeEliteKills = Number.isFinite(Number(eliteKills)) ? Math.max(0, Math.floor(Number(eliteKills))) : 0;
     const safeLevel = Number.isFinite(Number(level)) ? Math.max(1, Math.floor(Number(level))) : 1;
     const safeOrbs = Number.isFinite(Number(orbsCollected)) ? Math.max(0, Math.floor(Number(orbsCollected))) : 0;
     const awarded = {
@@ -129,6 +133,9 @@ export class RegionFlow {
     this.lastRunSummary = {
       regionId: this.activeRun.regionId,
       victory,
+      extracted: !!extracted && !victory,
+      eliteKills: safeEliteKills,
+      miniBossDefeated: !!miniBossDefeated,
       elapsedSeconds: elapsed,
       kills: safeKills,
       level: safeLevel,
