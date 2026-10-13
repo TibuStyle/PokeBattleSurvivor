@@ -162,10 +162,35 @@ export class GameApp {
     this.scene.add(grid);
 
     this.addForest(palette);
+    if (runConfig.regionId === 'hoenn') {
+      this.addVolcanicAsh();
+    }
     this.addPlayer(runConfig.starter);
     this.addTargetMarker();
     this.updateCamera(0, true);
     this.handleResize();
+  }
+
+  addVolcanicAsh() {
+    if (!this.scene) return;
+    const count = 220;
+    const positions = new Float32Array(count * 3);
+    const random = this.seededRandom(901);
+    for (let i = 0; i < count; i += 1) {
+      positions[i * 3] = (random() - 0.5) * 70;
+      positions[i * 3 + 1] = random() * 14 + 0.5;
+      positions[i * 3 + 2] = (random() - 0.5) * 70;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+      color: '#ffd29d',
+      size: 0.22,
+      transparent: true,
+      opacity: 0.68,
+    });
+    this.ashSystem = new THREE.Points(geometry, material);
+    this.scene.add(this.ashSystem);
   }
 
   addForest(palette) {
@@ -527,6 +552,32 @@ export class GameApp {
 
   updateWorldMarkers() {
     if (!this.scene) return;
+    if (this.ashSystem && this.player) {
+      const pos = this.ashSystem.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i += 1) {
+        let y = pos.getY(i) - 0.045;
+        if (y < 0.1) y = 13.5;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+      this.ashSystem.position.x = this.player.position.x * 0.65;
+      this.ashSystem.position.z = this.player.position.z * 0.65;
+    }
+
+    this.seenVfxIds ??= new Set();
+    for (const node of this.session?.frostNodes ?? []) {
+      if (!this.seenVfxIds.has(node.id)) {
+        this.seenVfxIds.add(node.id);
+        this.spawnRingEffect(node.x, node.z, '#96d9d6', node.radius, node.duration, 0.15);
+      }
+    }
+    for (const tele of this.session?.bossTelegraphs ?? []) {
+      if (!this.seenVfxIds.has(tele.id)) {
+        this.seenVfxIds.add(tele.id);
+        this.spawnRingEffect(tele.x, tele.z, tele.color ?? '#ff5c77', tele.radius, tele.duration, 0.25);
+      }
+    }
+
     const miniBoss = this.session?.activeMiniBoss;
     const boss = this.session?.activeBoss;
 
