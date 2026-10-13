@@ -119,6 +119,9 @@ export class GameApp {
       },
       onSelectUpgrade: (index) => this.chooseUpgrade(index),
     });
+    this.controls.setEquippedItemConstraints({
+      blocksStateMoves: Boolean(runConfig.equippedItem?.blocksStateMoves),
+    });
 
     this.clock.start();
     this.renderer.domElement.focus({ preventScroll: true });
@@ -363,10 +366,26 @@ export class GameApp {
     }
 
     const isFlying = this.runConfig.starter.types.includes('Volador');
+    const wasAirborne = this.height > 0.05;
     const gliding = isFlying && this.height > 0 && this.controls.isJumpHeld();
     this.verticalVelocity -= (gliding ? 5.8 : 21) * delta;
     this.height = Math.max(0, this.height + this.verticalVelocity * delta);
-    if (this.height === 0) this.verticalVelocity = 0;
+    if (this.height === 0) {
+      if (wasAirborne && isFlying) {
+        const tornado = this.session.triggerLandingTornado?.();
+        if (tornado?.triggered) {
+          this.spawnRingEffect(this.player.position.x, this.player.position.z, '#7de6e0', tornado.radius * 0.4, 0.45, 2.5);
+        }
+      }
+      this.verticalVelocity = 0;
+    }
+
+    if (this.controls.consumeStateSkill?.()) {
+      const buff = this.session.castStateSkill?.();
+      if (buff?.fired) {
+        this.spawnLevelUpEffect('#ff9f43');
+      }
+    }
 
     this.cameraYaw = this.controls.cameraYaw;
     this.cameraPitch = this.controls.cameraPitch;
