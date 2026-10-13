@@ -3,7 +3,7 @@
  * Sistemas del GDD para PokeBattleSurvivor:
  * 1. Pasivas por Tipo y Excepciones Legendarias (Synergy System)
  * 2. Sistema de Objetos de Equipo (Restos, Pañuelo Elección, Cinta Elegida)
- * 3. Gachapón Normal (Tickets) y Gachapón Shiny (Gemas)
+ * 3. Gachapón Normal (Tickets) y Gachapón Shiny (Gemas) + Movimientos por Arquetipo
  * 4. Habilidades de Subida de Nivel (Puntería al Clic, Automáticas y Estado)
  */
 
@@ -33,9 +33,9 @@ export const TYPE_SYNERGIES = {
     legendaryPassive: {
       name: 'Pararrayos en Cadena',
       description: 'Los enemigos golpeados actúan como pararrayos, encadenando arcos voltaicos entre toda la horda.',
-      chainMaxTargets: 8,
+      chainMaxTargets: 6,
       arcIntervalMs: 350,
-      arcDamageRatio: 0.55,
+      arcDamageRatio: 0.75,
     },
   },
   Hielo: {
@@ -58,20 +58,17 @@ export const TYPE_SYNERGIES = {
     name: 'Instinto Abisal',
     description: 'Aumenta la probabilidad de golpe crítico cuanta menos vida (PS) tengas.',
     baseCritChance: 0.08,
-    maxMissingHpCritBonus: 0.52, // Hasta +52% prob. crítico con PS bajos
+    maxMissingHpCritBonus: 0.52,
     critMultiplier: 2.0,
     legendaryPassive: {
       name: 'Eclipse de Calamidad',
-      description: 'Los golpes críticos con menos del 50% de PS generan ondas oscuras y drenan velocidad enemiga.',
+      description: 'Los golpes críticos con menos del 50% de PS generan ondas oscuras y multiplican el daño ×2.6.',
       critMultiplier: 2.6,
       shockwaveRadius: 4.0,
     },
   },
 };
 
-/**
- * Calcula la probabilidad de crítico dinámica para Pokémon de Tipo Siniestro.
- */
 export function calculateDarkTypeCritChance(currentHp, maxHp, isLegendary = false) {
   const synergy = TYPE_SYNERGIES.Siniestro;
   const safeMax = Math.max(1, maxHp);
@@ -119,6 +116,7 @@ export function getEquippedItemModifiers(itemId) {
   return EQUIP_ITEMS[itemId] ?? {
     id: 'none',
     name: 'Sin objeto',
+    description: 'Sin modificadores de objeto.',
     lifestealRatio: 0,
     attackSpeedMultiplier: 1.0,
     moveSpeedMultiplier: 1.0,
@@ -132,7 +130,7 @@ export const LEVEL_UP_SKILLS = {
   psicorrayo: {
     id: 'psicorrayo',
     name: 'Psicorrayo',
-    category: 'aimed', // Disparo activo con clic del mouse hacia el cursor
+    category: 'aimed',
     type: 'Psíquico',
     maxLevel: 3,
     levels: {
@@ -144,7 +142,7 @@ export const LEVEL_UP_SKILLS = {
   aura_esfera: {
     id: 'aura_esfera',
     name: 'Pulso Elemental',
-    category: 'auto', // Se lanza sola con cooldown en área alrededor del Pokémon
+    category: 'auto',
     type: 'Agua',
     maxLevel: 3,
     levels: {
@@ -156,7 +154,7 @@ export const LEVEL_UP_SKILLS = {
   danza_espada: {
     id: 'danza_espada',
     name: 'Danza Espada',
-    category: 'state', // Activable con tecla E / Clic Derecho (bloqueado si llevas Cinta Elegida)
+    category: 'state',
     type: 'Normal',
     maxLevel: 3,
     levels: {
@@ -167,39 +165,109 @@ export const LEVEL_UP_SKILLS = {
   },
 };
 
-// 4. SISTEMA DE GACHAPÓN NORMAL (TICKETS) Y SHINY (GEMAS)
+// 4. POOL DE GACHAPÓN (SKINS POR TIPO Y EXCEPCIONES LEGENDARIAS)
 export const GACHA_POOL = [
-  // Comunes (60%) - Funcionan como Skins ligadas a su Tipología
-  { id: 'pidgey', name: 'Pidgey', rarity: 'common', types: ['Volador'], chassisType: 'Volador', isLegendary: false },
-  { id: 'fearow', name: 'Fearow', rarity: 'common', types: ['Volador'], chassisType: 'Volador', isLegendary: false },
-  { id: 'pikachu', name: 'Pikachu', rarity: 'common', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false },
-  { id: 'spheal', name: 'Spheal', rarity: 'common', types: ['Hielo', 'Agua'], chassisType: 'Hielo', isLegendary: false },
-  { id: 'poochyena', name: 'Poochyena', rarity: 'common', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false },
+  // Comunes (60%) - Skins ligadas a su Tipología
+  { id: 'pidgey', name: 'Pidgey', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#c4b5ff', accent: '#ede6ff', shinyColor: '#ffd966' },
+  { id: 'fearow', name: 'Fearow', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#b5947b', accent: '#f0c987', shinyColor: '#a6e22e' },
+  { id: 'pikachu', name: 'Pikachu', rarity: 'common', rarityLabel: 'Común', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f7d02c', accent: '#fff4a3', shinyColor: '#ff9900' },
+  { id: 'spheal', name: 'Spheal', rarity: 'common', rarityLabel: 'Común', types: ['Hielo', 'Agua'], chassisType: 'Hielo', isLegendary: false, color: '#8fdde7', accent: '#d8f8fc', shinyColor: '#d988ff' },
+  { id: 'poochyena', name: 'Poochyena', rarity: 'common', rarityLabel: 'Común', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#8a8f9e', accent: '#ff7b89', shinyColor: '#ffd27a' },
   // Raros (25%)
-  { id: 'raichu', name: 'Raichu', rarity: 'rare', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false },
-  { id: 'glalie', name: 'Glalie', rarity: 'rare', types: ['Hielo'], chassisType: 'Hielo', isLegendary: false },
-  { id: 'houndoom', name: 'Houndoom', rarity: 'rare', types: ['Siniestro', 'Fuego'], chassisType: 'Siniestro', isLegendary: false },
+  { id: 'raichu', name: 'Raichu', rarity: 'rare', rarityLabel: 'Raro', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f39c12', accent: '#fff08a', shinyColor: '#ff6b4a' },
+  { id: 'glalie', name: 'Glalie', rarity: 'rare', rarityLabel: 'Raro', types: ['Hielo'], chassisType: 'Hielo', isLegendary: false, color: '#96d9d6', accent: '#c9ffff', shinyColor: '#ff5c77' },
+  { id: 'houndoom', name: 'Houndoom', rarity: 'rare', rarityLabel: 'Raro', types: ['Siniestro', 'Fuego'], chassisType: 'Siniestro', isLegendary: false, color: '#5c4b51', accent: '#ff6b4a', shinyColor: '#4aa3ff' },
   // Súper Raros (10%)
-  { id: 'aerodactyl', name: 'Aerodactyl', rarity: 'super_rare', types: ['Volador', 'Roca'], chassisType: 'Volador', isLegendary: false },
-  { id: 'absol', name: 'Absol', rarity: 'super_rare', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false },
+  { id: 'aerodactyl', name: 'Aerodactyl', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Volador', 'Roca'], chassisType: 'Volador', isLegendary: false, color: '#a98ff3', accent: '#e0d4fc', shinyColor: '#ff85d0' },
+  { id: 'absol', name: 'Absol', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#d8dee9', accent: '#5e81ac', shinyColor: '#ff7a66' },
   // Legendarios (5%) - Pasivas únicas y forma elemental perfecta
-  { id: 'zapdos', name: 'Zapdos', rarity: 'legendary', types: ['Eléctrico', 'Volador'], chassisType: 'Eléctrico', isLegendary: true },
-  { id: 'articuno', name: 'Articuno', rarity: 'legendary', types: ['Hielo', 'Volador'], chassisType: 'Hielo', isLegendary: true },
-  { id: 'lugia', name: 'Lugia', rarity: 'legendary', types: ['Volador', 'Psíquico'], chassisType: 'Volador', isLegendary: true },
-  { id: 'mewtwo', name: 'Mewtwo', rarity: 'legendary', types: ['Psíquico'], chassisType: 'Psíquico', isLegendary: true },
+  { id: 'zapdos', name: 'Zapdos', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Eléctrico', 'Volador'], chassisType: 'Eléctrico', isLegendary: true, color: '#ffd700', accent: '#fffacd', shinyColor: '#ffae00' },
+  { id: 'articuno', name: 'Articuno', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Hielo', 'Volador'], chassisType: 'Hielo', isLegendary: true, color: '#5bc0eb', accent: '#e0fbfc', shinyColor: '#b8e8fc' },
+  { id: 'lugia', name: 'Lugia', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Volador', 'Psíquico'], chassisType: 'Volador', isLegendary: true, color: '#b8d4e3', accent: '#7de6e0', shinyColor: '#ff8fa3' },
+  { id: 'mewtwo', name: 'Mewtwo', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Psíquico'], chassisType: 'Psíquico', isLegendary: true, color: '#c9a3f7', accent: '#ff7be5', shinyColor: '#7be36b' },
 ];
+
+export const GACHA_ARCHETYPE_MOVES = {
+  Volador: {
+    basic: {
+      id: 'tornado-aire', name: 'Tornado Aéreo', type: 'Volador', slot: 'basic', shape: 'beam',
+      power: 42, cooldown: 0.48, range: 8.5, width: 0.75, pierce: 2, knockback: 1.6,
+      color: '#a98ff3', description: 'Ráfaga cortante que empuja a la horda.',
+    },
+    special: {
+      id: 'vendaval', name: 'Vendaval', type: 'Volador', slot: 'special', shape: 'burst',
+      power: 95, cooldown: 5.5, radius: 3.6, knockback: 3.2,
+      color: '#7de6e0', description: 'Torbellino 3D que lanza por los aires a los enemigos cercanos.',
+    },
+  },
+  Eléctrico: {
+    basic: {
+      id: 'impactrueno', name: 'Impactrueno', type: 'Eléctrico', slot: 'basic', shape: 'beam',
+      power: 44, cooldown: 0.46, range: 9.2, width: 0.7, pierce: 2, knockback: 1.1,
+      color: '#f7d02c', description: 'Descarga veloz que rebota hacia enemigos cercanos.',
+    },
+    special: {
+      id: 'trueno', name: 'Trueno', type: 'Eléctrico', slot: 'special', shape: 'burst',
+      power: 105, cooldown: 6.0, radius: 3.8, knockback: 2.6,
+      color: '#ffe066', description: 'Tempestad eléctrica que electrocuta toda el área.',
+    },
+  },
+  Hielo: {
+    basic: {
+      id: 'viento-hielo', name: 'Viento Hielo', type: 'Hielo', slot: 'basic', shape: 'cone',
+      power: 42, cooldown: 0.54, range: 8.0, arc: 0.85, maxTargets: 5, knockback: 1.3,
+      color: '#96d9d6', description: 'Abanico gélido que congela el avance enemigo.',
+    },
+    special: {
+      id: 'ventisca', name: 'Ventisca', type: 'Hielo', slot: 'special', shape: 'burst',
+      power: 100, cooldown: 6.2, radius: 4.0, knockback: 2.4,
+      color: '#c9ffff', description: 'Tormenta polar que cristaliza todo a su alrededor.',
+    },
+  },
+  Siniestro: {
+    basic: {
+      id: 'pulso-umbrio', name: 'Pulso Umbrío', type: 'Siniestro', slot: 'basic', shape: 'beam',
+      power: 46, cooldown: 0.5, range: 8.8, width: 0.8, pierce: 2, knockback: 1.4,
+      color: '#8a8f9e', description: 'Haz sombrío con alta letalidad crítica a baja vida.',
+    },
+    special: {
+      id: 'juego-sucio', name: 'Estallido Nocturno', type: 'Siniestro', slot: 'special', shape: 'cone',
+      power: 105, cooldown: 5.8, range: 8.5, arc: 0.9, maxTargets: 9, knockback: 2.5,
+      color: '#ff6b87', description: 'Barrido abisal devastador frente al compañero.',
+    },
+  },
+  Psíquico: {
+    basic: {
+      id: 'psicorrayo', name: 'Psicorrayo', type: 'Psíquico', slot: 'basic', shape: 'beam',
+      power: 65, cooldown: 0.42, range: 11.5, width: 0.82, pierce: 3, knockback: 2.5, beams: 1,
+      color: '#ff7be5', description: 'Haz psíquico perforante que evoluciona con el nivel.',
+    },
+    special: {
+      id: 'onda-mental', name: 'Onda Mental', type: 'Psíquico', slot: 'special', shape: 'burst',
+      power: 125, cooldown: 6.5, radius: 4.4, knockback: 3.6,
+      color: '#c9a3f7', description: 'Explosión psíquica masiva estilo Mewtwo.',
+    },
+  },
+};
+
+export function getGachaPokemon(pokemonId) {
+  return GACHA_POOL.find((p) => p.id === pokemonId) ?? null;
+}
+
+export function getGachaMoveset(pokemonId) {
+  const entry = getGachaPokemon(pokemonId);
+  if (!entry) return null;
+  return GACHA_ARCHETYPE_MOVES[entry.chassisType] ?? GACHA_ARCHETYPE_MOVES.Volador;
+}
 
 export function selectRarityByRoll(randomValue = Math.random()) {
   const roll = randomValue * 100;
-  if (roll < 5) return 'legendary';    // 5%
-  if (roll < 15) return 'super_rare';  // 10% (5 a 15)
-  if (roll < 40) return 'rare';        // 25% (15 a 40)
-  return 'common';                     // 60% (40 a 100)
+  if (roll < 5) return 'legendary';
+  if (roll < 15) return 'super_rare';
+  if (roll < 40) return 'rare';
+  return 'common';
 }
 
-/**
- * Tirada de Gachapón Normal (consume 1 Ticket).
- */
 export function rollNormalGacha(randomFn = Math.random) {
   const rarity = selectRarityByRoll(randomFn());
   const candidates = GACHA_POOL.filter((p) => p.rarity === rarity);
@@ -208,17 +276,10 @@ export function rollNormalGacha(randomFn = Math.random) {
   return { ...pool[index], rarity };
 }
 
-/**
- * Tirada de Gachapón Shiny (consume Gemas).
- * Regla GDD: Solo otorga la Skin Shiny de Pokémon que YA tengas desbloqueados.
- */
 export function rollShinyGacha(unlockedPokemonIds = [], randomFn = Math.random) {
   const unlockedSet = new Set(unlockedPokemonIds);
   const unlockedPool = GACHA_POOL.filter((p) => unlockedSet.has(p.id));
-
-  if (unlockedPool.length === 0) {
-    return null;
-  }
+  if (unlockedPool.length === 0) return null;
 
   const rarity = selectRarityByRoll(randomFn());
   const byRarity = unlockedPool.filter((p) => p.rarity === rarity);
