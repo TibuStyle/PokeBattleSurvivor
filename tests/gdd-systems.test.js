@@ -1,3 +1,4 @@
+import { RunSession } from '../src/game/RunSession.js';
 /**
  * tests/gdd-systems.test.js
  * Suite de pruebas unitarias para validar los sistemas del GDD 3D:
@@ -79,4 +80,54 @@ test('Habilidades de subida de nivel evolucionan Psicorrayo y Danza Espada segú
   assert.equal(LEVEL_UP_SKILLS.danza_espada.levels[1].durationSec, 20);
   assert.equal(LEVEL_UP_SKILLS.danza_espada.levels[1].cooldownSec, 5);
   assert.ok(TYPE_SYNERGIES.Volador.legendaryPassive.tornadoRadius > 0);
+});
+
+test('HybridControls expone todos los métodos requeridos por GameApp.js y calcula WASD correctamente', () => {
+  const controls = new HybridControls({ enabled: false, cameraYaw: Math.PI });
+  controls.enabled = true;
+
+  controls.handleKeyDown({ code: 'KeyW' });
+  const move = controls.getMovementVector(Math.PI);
+  assert.ok(Math.abs(move.z - -1) < 1e-6, 'W con yaw=PI avanza hacia -Z');
+
+  controls.handleKeyDown({ code: 'Space' });
+  assert.equal(controls.isJumpHeld(), true);
+  assert.equal(controls.consumeJumpRequest(), true);
+  assert.equal(controls.consumeJumpRequest(), false);
+
+  controls.clearKeys();
+  assert.equal(controls.isJumpHeld(), false);
+  controls.dispose();
+});
+
+test('RunSession aplica Restos (Lifesteal), Cinta Elegida (+Daño / Bloqueo Danza Espada) y Tornado Volador', () => {
+  const sessionRestos = new RunSession(
+    {
+      regionId: 'kanto',
+      equippedItemId: 'restos',
+      starter: { id: 'charmander', name: 'Charmander', types: ['Fuego'], color: '#f38b52', accent: '#ffd166' },
+    },
+    { spawnInitialWave: false }
+  );
+  sessionRestos.player.hp = 50;
+  sessionRestos.spawnEnemy({ species: 'Caterpie', x: 0, z: -3, hp: 200 });
+  sessionRestos.firePrimary({ x: 0, z: -1 }, { force: true });
+  assert.ok(sessionRestos.player.hp > 50, 'Restos debe recuperar PS al golpear');
+
+  const sessionCinta = new RunSession(
+    {
+      regionId: 'kanto',
+      equippedItemId: 'cinta_elegida',
+      starter: { id: 'torchic', name: 'Torchic', types: ['Fuego', 'Volador'], color: '#f4a84e', accent: '#ffe293' },
+    },
+    { spawnInitialWave: false }
+  );
+  const blockedState = sessionCinta.castStateSkill();
+  assert.equal(blockedState.fired, false);
+  assert.equal(blockedState.reason, 'blocked-by-choice-band');
+
+  sessionCinta.spawnEnemy({ species: 'Caterpie', x: 1, z: 1, hp: 200 });
+  const tornado = sessionCinta.triggerLandingTornado();
+  assert.equal(tornado.triggered, true);
+  assert.equal(tornado.hits.length, 1);
 });
