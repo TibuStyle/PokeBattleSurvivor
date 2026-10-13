@@ -68,6 +68,8 @@ export class GameApp {
     this.effects = [];
     this.enemyVisuals = new Map();
     this.orbVisuals = new Map();
+    this.chestVisuals = new Map();
+    this.playerWorldHpFill = null;
     this.bossMarker = null;
     this.miniBossMarker = null;
     this.dashTrail = null;
@@ -99,6 +101,7 @@ export class GameApp {
 
     this.syncEnemies(0);
     this.syncOrbs(0);
+    this.syncChests(0);
 
     this.controls = new HybridControls({
       element: this.renderer.domElement,
@@ -146,9 +149,19 @@ export class GameApp {
     sun.position.set(-12, 22, 9);
     this.scene.add(sun);
 
+    const floorGeo = new THREE.PlaneGeometry(180, 180, 72, 72);
+    const posAttr = floorGeo.attributes.position;
+    for (let i = 0; i < posAttr.count; i += 1) {
+      const vx = posAttr.getX(i);
+      const vy = posAttr.getY(i);
+      // Plane is rotated -PI/2 around X, so world Z corresponds to -vy
+      const worldZ = -vy;
+      posAttr.setZ(i, this.getTerrainHeight(vx, worldZ));
+    }
+    floorGeo.computeVertexNormals();
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(180, 180),
-      new THREE.MeshStandardMaterial({ color: palette[1], roughness: 1, metalness: 0 }),
+      floorGeo,
+      new THREE.MeshStandardMaterial({ color: palette[1], roughness: 0.92, metalness: 0.04, flatShading: true }),
     );
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.08;
@@ -222,7 +235,28 @@ export class GameApp {
       crown.position.y = height + 0.45;
       crown.scale.set(1, 0.92 + random() * 0.22, 0.95);
       tree.add(crown);
+      tree.position.y = this.getTerrainHeight(x, z);
       this.scene.add(tree);
+    }
+
+    // Rocas Low-Poly estilo Megabonk repartidas por las colinas
+    const rockMaterial = new THREE.MeshStandardMaterial({
+      color: '#6c757d',
+      roughness: 0.88,
+      metalness: 0.08,
+      flatShading: true,
+    });
+    for (let r = 0; r < 26; r += 1) {
+      const angle = random() * Math.PI * 2;
+      const radius = 8 + random() * 40;
+      const rx = Math.cos(angle) * radius;
+      const rz = Math.sin(angle) * radius;
+      const scale = 0.75 + random() * 1.35;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(scale, 0), rockMaterial);
+      rock.position.set(rx, this.getTerrainHeight(rx, rz) + scale * 0.35, rz);
+      rock.rotation.set(random() * 2, random() * 2, random() * 2);
+      rock.scale.set(1.2, 0.78, 1.0);
+      this.scene.add(rock);
     }
   }
 
@@ -292,13 +326,41 @@ export class GameApp {
     this.scene.add(this.playerShadow);
 
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.79, 0.025, 6, 36),
-      new THREE.MeshBasicMaterial({ color: starter.accent, transparent: true, opacity: 0.74 }),
+      new THREE.TorusGeometry(0.82, 0.038, 8, 36),
+      new THREE.MeshBasicMaterial({ color: '#00e5ff', transparent: true, opacity: 0.88 }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.06;
     this.player.add(ring);
     this.playerRing = ring;
+
+    // Barra de PS y Energía flotando bajo los pies del jugador (estilo Megabonk)
+    const barGroup = new THREE.Group();
+    barGroup.position.set(0, 0.12, 0.95);
+    barGroup.rotation.x = -Math.PI / 3;
+
+    const bgBar = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.25, 0.18),
+      new THREE.MeshBasicMaterial({ color: '#11161d', transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+    );
+    barGroup.add(bgBar);
+
+    const shieldBar = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.2, 0.055),
+      new THREE.MeshBasicMaterial({ color: '#00d8ff', side: THREE.DoubleSide }),
+    );
+    shieldBar.position.set(0, 0.045, 0.004);
+    barGroup.add(shieldBar);
+
+    const hpBar = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.2, 0.085),
+      new THREE.MeshBasicMaterial({ color: '#ff3b30', side: THREE.DoubleSide }),
+    );
+    hpBar.position.set(0, -0.03, 0.005);
+    barGroup.add(hpBar);
+
+    this.player.add(barGroup);
+    this.playerWorldHpFill = hpBar;
   }
 
   addTargetMarker() {
@@ -358,6 +420,21 @@ export class GameApp {
       this.renderer.domElement.focus({ preventScroll: true });
     }
     return true;
+  }
+
+  rerollChoices() {
+    if (!this.running || !this.session || this.session.status !== 'level-up') return false;
+    const res = this.session.rerollUpgradeChoices?.();
+    if (!res?.ok) return false;
+    this.emitHudUpdate(true);
+    this.onLevelUp(this.session.pendingChoices);
+    return true;
+  }
+
+  getTerrainHeight(x, z) {
+    const distFromCenter = Math.hypot(x, z);
+    const flattenCenter = Math.min(1, Math.max(0, (distFromCenter - 4) / 10));
+    return (Math.sin(x * 0.085) * Math.cos(z * 0.085) * 1.45 + Math.sin((x + z) * 0.05) * 0.65) * flattenCenter;
   }
 
   frame() {
@@ -447,11 +524,23 @@ export class GameApp {
       this.spawnAnnouncement('#ff7be5', '¡Jefe regional!');
     }
 
+    if (events.chestsOpened?.length > 0) {
+      for (const opened of events.chestsOpened) {
+        this.spawnRingEffect(opened.x, opened.z, '#ffd166', 1.4, 0.45, 2.8);
+      }
+    }
+
+    const groundY = this.getTerrainHeight(this.session.player.x, this.session.player.z);
     this.player.position.set(
       this.session.player.x,
-      this.height + Math.sin(this.elapsed * 3.2) * 0.045,
+      groundY + this.height + Math.sin(this.elapsed * 3.2) * 0.045,
       this.session.player.z,
     );
+    if (this.playerWorldHpFill) {
+      const hpRatio = clamp01(this.session.player.hp / Math.max(1, this.session.player.maxHp));
+      this.playerWorldHpFill.scale.x = Math.max(0.001, hpRatio);
+      this.playerWorldHpFill.position.x = -(1 - hpRatio) * 1.2 * 0.5;
+    }
     this.player.rotation.y = this.session.player.rotationY;
 
     if (this.playerBodyMaterial) {
@@ -484,6 +573,7 @@ export class GameApp {
 
     this.syncEnemies(delta);
     this.syncOrbs(delta);
+    this.syncChests(delta);
     this.updateWorldMarkers();
     this.emitHudUpdate(false);
 
@@ -638,7 +728,11 @@ export class GameApp {
       }
 
       const bob = Math.sin(this.elapsed * (enemy.isBoss ? 3.5 : 6.2) + enemy.x * 0.5) * 0.05;
-      visual.group.position.set(enemy.x, Math.max(0, bob), enemy.z);
+      const terrainY = this.getTerrainHeight(enemy.x, enemy.z);
+      visual.group.position.set(enemy.x, terrainY + Math.max(0, bob), enemy.z);
+      if (visual.crown) {
+        visual.crown.rotation.y += 0.045;
+      }
       visual.bodyGroup.rotation.y = enemy.rotationY;
 
       const hpRatio = clamp01(enemy.hp / enemy.maxHp);
@@ -772,6 +866,28 @@ export class GameApp {
     hpFill.rotation.x = -Math.PI / 5;
     group.add(hpFill);
 
+    let crown = null;
+    if (enemy.isElite || enemy.isMiniBoss || enemy.isBoss) {
+      crown = new THREE.Group();
+      const crownMat = new THREE.MeshStandardMaterial({
+        color: '#ffd700',
+        emissive: '#ffae00',
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.75,
+      });
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.24 * baseScale, 0.2 * baseScale, 0.12 * baseScale, 6, 1, true), crownMat);
+      crown.add(band);
+      for (let p = 0; p < 4; p += 1) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06 * baseScale, 0.14 * baseScale, 4), crownMat);
+        const a = (p / 4) * Math.PI * 2;
+        spike.position.set(Math.cos(a) * 0.2 * baseScale, 0.1 * baseScale, Math.sin(a) * 0.2 * baseScale);
+        crown.add(spike);
+      }
+      crown.position.set(0, barY + 0.24, 0);
+      group.add(crown);
+    }
+
     return {
       group,
       bodyGroup,
@@ -779,6 +895,7 @@ export class GameApp {
       auraRing,
       hpFill,
       barWidth,
+      crown,
     };
   }
 
@@ -795,7 +912,7 @@ export class GameApp {
         this.scene.add(visual.group);
       }
 
-      const hover = 0.28 + Math.sin(this.elapsed * 4.5 + orb.age * 3) * 0.08;
+      const hover = this.getTerrainHeight(orb.x, orb.z) + 0.28 + Math.sin(this.elapsed * 4.5 + orb.age * 3) * 0.08;
       visual.group.position.set(orb.x, hover, orb.z);
       visual.gem.rotation.y += delta * (orb.magnetized ? 6.5 : 2.6);
       visual.gem.rotation.x += delta * 1.4;
@@ -842,6 +959,66 @@ export class GameApp {
     group.add(halo);
 
     return { group, gem, halo };
+  }
+
+  syncChests(delta) {
+    if (!this.scene || !this.session) return;
+    const activeIds = new Set();
+    for (const chest of this.session.chests ?? []) {
+      activeIds.add(chest.id);
+      let visual = this.chestVisuals.get(chest.id);
+      if (!visual) {
+        visual = this.createChestVisual(chest);
+        this.chestVisuals.set(chest.id, visual);
+        this.scene.add(visual.group);
+      }
+      const ty = this.getTerrainHeight(chest.x, chest.z);
+      visual.group.position.set(chest.x, ty + 0.25, chest.z);
+      visual.group.rotation.y += delta * 0.9;
+    }
+
+    for (const [chestId, visual] of this.chestVisuals.entries()) {
+      if (!activeIds.has(chestId)) {
+        this.disposeObjectGroup(visual.group);
+        this.chestVisuals.delete(chestId);
+      }
+    }
+  }
+
+  createChestVisual() {
+    const group = new THREE.Group();
+    const woodMat = new THREE.MeshStandardMaterial({ color: '#8d5524', roughness: 0.65, metalness: 0.1 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: '#ffd166', emissive: '#ffae00', emissiveIntensity: 0.45, roughness: 0.25, metalness: 0.6 });
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.5, 0.6), woodMat);
+    group.add(base);
+
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.85, 10, 1, false, 0, Math.PI), woodMat);
+    lid.rotation.z = Math.PI / 2;
+    lid.position.y = 0.25;
+    group.add(lid);
+
+    const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.56, 0.64), goldMat);
+    strapL.position.x = -0.26;
+    group.add(strapL);
+
+    const strapR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.56, 0.64), goldMat);
+    strapR.position.x = 0.26;
+    group.add(strapR);
+
+    const lock = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.1), goldMat);
+    lock.position.set(0, 0.12, 0.32);
+    group.add(lock);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.58, 0.78, 24),
+      new THREE.MeshBasicMaterial({ color: '#ffd166', transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = -0.22;
+    group.add(ring);
+
+    return { group };
   }
 
   spawnBeamEffects(beams) {
@@ -1141,6 +1318,7 @@ export class GameApp {
     this.controls = null;
     this.enemyVisuals.clear();
     this.orbVisuals.clear();
+    this.chestVisuals.clear();
     if (this.bossMarker) {
       this.disposeObjectGroup(this.bossMarker);
       this.bossMarker = null;
