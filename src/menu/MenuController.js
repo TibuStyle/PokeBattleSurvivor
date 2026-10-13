@@ -1,4 +1,4 @@
-import { EQUIP_ITEMS, getEquippedItemModifiers, rollNormalGacha, rollShinyGacha } from '../data/gddSystems.js';
+import { EQUIP_ITEMS, GACHA_POOL, TYPE_SYNERGIES, getEquippedItemModifiers, getGachaPokemon, rollNormalGacha, rollShinyGacha } from '../data/gddSystems.js';
 import { getUpgradeCost, PERMANENT_UPGRADES, RARITY_RATES } from '../data/economy.js';
 import { REGIONS, STARTERS } from '../data/regions.js';
 import { getStarterMoveset, STAB_MULTIPLIER, DAMAGE_SCALE } from '../data/moves.js';
@@ -301,7 +301,8 @@ export class MenuController {
   }
 
   renderPokedex() {
-    const unlockedCount = this.flow.profile.unlockedPokemon.length;
+    const starterIds = new Set(STARTERS.map((s) => s.id));
+    const unlockedCount = this.flow.profile.unlockedPokemon.filter((id) => starterIds.has(id)).length;
     return `
       <section class="page-heading">
         <span class="eyebrow">ARCHIVO DE CAMPO · ${pad2(unlockedCount)} / ${pad2(STARTERS.length)} REGISTRADOS</span>
