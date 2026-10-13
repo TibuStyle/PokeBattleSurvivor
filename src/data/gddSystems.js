@@ -1,11 +1,39 @@
 /**
  * src/data/gddSystems.js
- * Sistemas del GDD para PokeBattleSurvivor:
- * 1. Pasivas por Tipo y Excepciones Legendarias (Synergy System)
- * 2. Sistema de Objetos de Equipo (Restos, Pañuelo Elección, Cinta Elegida)
- * 3. Gachapón Normal (Tickets) y Gachapón Shiny (Gemas) + Movimientos por Arquetipo
- * 4. Habilidades de Subida de Nivel (Puntería al Clic, Automáticas y Estado)
+ * Fusión PokéSurvivor (UI, 9 Regiones, Gacha x1/x10, Objetos Pokémon, Pokédex con Sprites)
+ * + Megabonk 3D (Colinas 3D, Cofres en el mapa, Coronas de Élite, Empuje físico y Sinergias).
  */
+
+export const POKEMON_DEX_IDS = {
+  // Iniciales Regionales
+  bulbasaur: 1, charmander: 4, squirtle: 7,
+  chikorita: 152, cyndaquil: 155, totodile: 158,
+  treecko: 252, torchic: 255, mudkip: 258,
+  turtwig: 387, chimchar: 390, piplup: 393,
+  snivy: 495, tepig: 498, oshawott: 501,
+  chespin: 650, fennekin: 653, froakie: 656,
+  rowlet: 722, litten: 725, popplio: 728,
+  grookey: 810, scorbunny: 813, sobble: 816,
+  sprigatito: 906, fuecoco: 909, quaxly: 912,
+  // Pool Gachapón y Favoritos PokéSurvivor
+  pidgey: 16, fearow: 22, pikachu: 25, raichu: 26,
+  psyduck: 54, slowpoke: 79, gengar: 94, eevee: 133,
+  snorlax: 143, aerodactyl: 142, zapdos: 145, articuno: 144,
+  moltres: 146, dragonite: 149, mewtwo: 150,
+  houndoom: 229, lugia: 249, ho_oh: 250,
+  gardevoir: 282, absol: 359, spheal: 363, glalie: 362,
+  poochyena: 261, aggron: 306, flygon: 330,
+  groudon: 383, kyogre: 382, rayquaza: 384,
+  lucario: 448, garchomp: 445, greninja: 658,
+  ceruledge: 937, tinkaton: 959,
+};
+
+export function getPokemonSpriteUrl(pokemonId, { shiny = false } = {}) {
+  const dexNumber = POKEMON_DEX_IDS[pokemonId] ?? 25;
+  return shiny
+    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${dexNumber}.png`
+    : `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dexNumber}.png`;
+}
 
 // 1. PASIVAS POR TIPO (SYNERGY SYSTEM)
 export const TYPE_SYNERGIES = {
@@ -78,37 +106,67 @@ export function calculateDarkTypeCritChance(currentHp, maxHp, isLegendary = fals
   return { critChance, critDamage };
 }
 
-// 2. SISTEMA DE OBJETOS DE EQUIPO (HELD ITEMS)
+// 2. SISTEMA DE OBJETOS EQUIPABLES DEL MUNDO POKÉMON
 export const EQUIP_ITEMS = {
   restos: {
     id: 'restos',
     name: 'Restos',
+    icon: '🍎',
     description: 'Robo de Vida (Lifesteal) del 4% del daño infligido por golpe.',
     lifestealRatio: 0.04,
     attackSpeedMultiplier: 1.0,
     moveSpeedMultiplier: 1.0,
     physicalDamageMultiplier: 1.0,
+    coinBonusMultiplier: 1.0,
     blocksStateMoves: false,
   },
   panuelo_eleccion: {
     id: 'panuelo_eleccion',
     name: 'Pañuelo Elección',
+    icon: '🧣',
     description: '+35% Velocidad de ataque, -15% Velocidad de movimiento.',
     lifestealRatio: 0,
     attackSpeedMultiplier: 1.35,
     moveSpeedMultiplier: 0.85,
     physicalDamageMultiplier: 1.0,
+    coinBonusMultiplier: 1.0,
     blocksStateMoves: false,
   },
   cinta_elegida: {
     id: 'cinta_elegida',
     name: 'Cinta Elegida',
+    icon: '🎗️',
     description: '+45% Daño físico, pero bloquea todos los Movimientos de Estado.',
     lifestealRatio: 0,
     attackSpeedMultiplier: 1.0,
     moveSpeedMultiplier: 1.0,
     physicalDamageMultiplier: 1.45,
+    coinBonusMultiplier: 1.0,
     blocksStateMoves: true,
+  },
+  vidasfera: {
+    id: 'vidasfera',
+    name: 'Vidasfera',
+    icon: '🔮',
+    description: '+30% Daño total y +10% Velocidad de ataque (clásico de PokéSurvivor).',
+    lifestealRatio: 0,
+    attackSpeedMultiplier: 1.1,
+    moveSpeedMultiplier: 1.0,
+    physicalDamageMultiplier: 1.3,
+    coinBonusMultiplier: 1.0,
+    blocksStateMoves: false,
+  },
+  moneda_amuleto: {
+    id: 'moneda_amuleto',
+    name: 'Moneda Amuleto',
+    icon: '🪙',
+    description: '+35% Pokémonedas obtenidas al derrotar enemigos y abrir cofres.',
+    lifestealRatio: 0,
+    attackSpeedMultiplier: 1.0,
+    moveSpeedMultiplier: 1.05,
+    physicalDamageMultiplier: 1.0,
+    coinBonusMultiplier: 1.35,
+    blocksStateMoves: false,
   },
 };
 
@@ -116,14 +174,24 @@ export function getEquippedItemModifiers(itemId) {
   return EQUIP_ITEMS[itemId] ?? {
     id: 'none',
     name: 'Sin objeto',
+    icon: '○',
     description: 'Sin modificadores de objeto.',
     lifestealRatio: 0,
     attackSpeedMultiplier: 1.0,
     moveSpeedMultiplier: 1.0,
     physicalDamageMultiplier: 1.0,
+    coinBonusMultiplier: 1.0,
     blocksStateMoves: false,
   };
 }
+
+// 2B. BOTÍN DE COFRES 3D EN EL MAPA (ESTILO MEGABONK + MUNDO POKÉMON)
+export const CHEST_LOOT_TABLE = [
+  { id: 'baya_zidra', name: 'Baya Zidra', icon: '🍊', kind: 'heal', healRatio: 0.45, coins: 12, description: 'Recupera un 45% de tus PS máximos al instante.' },
+  { id: 'baya_ziuela', name: 'Baya Ziuela', icon: '🍏', kind: 'cleanse', invulnSec: 3.0, coins: 15, description: 'Reinicia enfriamientos y otorga 3s de escudo.' },
+  { id: 'caramelo_raro', name: 'Caramelo Raro', icon: '🍬', kind: 'xp', xpBonus: 65, coins: 18, description: 'Otorga una gran inyección de XP inmediata.' },
+  { id: 'pepita', name: 'Pepita de Oro', icon: '✨', kind: 'coins', coins: 45, description: '+45 Pokémonedas directas para tus mejoras.' },
+];
 
 // 3. HABILIDADES EN PARTIDA (PUNTERÍA, AUTOMÁTICAS Y ESTADO)
 export const LEVEL_UP_SKILLS = {
@@ -165,26 +233,43 @@ export const LEVEL_UP_SKILLS = {
   },
 };
 
-// 4. POOL DE GACHAPÓN (SKINS POR TIPO Y EXCEPCIONES LEGENDARIAS)
+// 4. POOL AMPLIADO DE POKÉMON (9 REGIONES + FAVORITOS DE POKÉSURVIVOR)
 export const GACHA_POOL = [
-  // Comunes (60%) - Skins ligadas a su Tipología
-  { id: 'pidgey', name: 'Pidgey', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#c4b5ff', accent: '#ede6ff', shinyColor: '#ffd966' },
-  { id: 'fearow', name: 'Fearow', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#b5947b', accent: '#f0c987', shinyColor: '#a6e22e' },
-  { id: 'pikachu', name: 'Pikachu', rarity: 'common', rarityLabel: 'Común', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f7d02c', accent: '#fff4a3', shinyColor: '#ff9900' },
-  { id: 'spheal', name: 'Spheal', rarity: 'common', rarityLabel: 'Común', types: ['Hielo', 'Agua'], chassisType: 'Hielo', isLegendary: false, color: '#8fdde7', accent: '#d8f8fc', shinyColor: '#d988ff' },
-  { id: 'poochyena', name: 'Poochyena', rarity: 'common', rarityLabel: 'Común', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#8a8f9e', accent: '#ff7b89', shinyColor: '#ffd27a' },
+  // Comunes (60%)
+  { id: 'pidgey', dex: 16, region: 'Kanto', name: 'Pidgey', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#c4b5ff', accent: '#ede6ff', shinyColor: '#ffd966' },
+  { id: 'fearow', dex: 22, region: 'Kanto', name: 'Fearow', rarity: 'common', rarityLabel: 'Común', types: ['Volador'], chassisType: 'Volador', isLegendary: false, color: '#b5947b', accent: '#f0c987', shinyColor: '#a6e22e' },
+  { id: 'pikachu', dex: 25, region: 'Kanto', name: 'Pikachu', rarity: 'common', rarityLabel: 'Común', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f7d02c', accent: '#fff4a3', shinyColor: '#ff9900' },
+  { id: 'psyduck', dex: 54, region: 'Kanto', name: 'Psyduck', rarity: 'common', rarityLabel: 'Común', types: ['Agua', 'Psíquico'], chassisType: 'Psíquico', isLegendary: false, color: '#f9d769', accent: '#78c6e5', shinyColor: '#6fd3ff' },
+  { id: 'slowpoke', dex: 79, region: 'Kanto', name: 'Slowpoke', rarity: 'common', rarityLabel: 'Común', types: ['Agua', 'Psíquico'], chassisType: 'Psíquico', isLegendary: false, color: '#f598b6', accent: '#ffe293', shinyColor: '#d094ff' },
+  { id: 'eevee', dex: 133, region: 'Kanto', name: 'Eevee', rarity: 'common', rarityLabel: 'Común', types: ['Normal'], chassisType: 'Volador', isLegendary: false, color: '#c89b6e', accent: '#f5e4c3', shinyColor: '#e5e9f0' },
+  { id: 'spheal', dex: 363, region: 'Hoenn', name: 'Spheal', rarity: 'common', rarityLabel: 'Común', types: ['Hielo', 'Agua'], chassisType: 'Hielo', isLegendary: false, color: '#8fdde7', accent: '#d8f8fc', shinyColor: '#d988ff' },
+  { id: 'poochyena', dex: 261, region: 'Hoenn', name: 'Poochyena', rarity: 'common', rarityLabel: 'Común', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#8a8f9e', accent: '#ff7b89', shinyColor: '#ffd27a' },
+
   // Raros (25%)
-  { id: 'raichu', name: 'Raichu', rarity: 'rare', rarityLabel: 'Raro', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f39c12', accent: '#fff08a', shinyColor: '#ff6b4a' },
-  { id: 'glalie', name: 'Glalie', rarity: 'rare', rarityLabel: 'Raro', types: ['Hielo'], chassisType: 'Hielo', isLegendary: false, color: '#96d9d6', accent: '#c9ffff', shinyColor: '#ff5c77' },
-  { id: 'houndoom', name: 'Houndoom', rarity: 'rare', rarityLabel: 'Raro', types: ['Siniestro', 'Fuego'], chassisType: 'Siniestro', isLegendary: false, color: '#5c4b51', accent: '#ff6b4a', shinyColor: '#4aa3ff' },
-  // Súper Raros (10%)
-  { id: 'aerodactyl', name: 'Aerodactyl', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Volador', 'Roca'], chassisType: 'Volador', isLegendary: false, color: '#a98ff3', accent: '#e0d4fc', shinyColor: '#ff85d0' },
-  { id: 'absol', name: 'Absol', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#d8dee9', accent: '#5e81ac', shinyColor: '#ff7a66' },
+  { id: 'raichu', dex: 26, region: 'Kanto', name: 'Raichu', rarity: 'rare', rarityLabel: 'Raro', types: ['Eléctrico'], chassisType: 'Eléctrico', isLegendary: false, color: '#f39c12', accent: '#fff08a', shinyColor: '#ff6b4a' },
+  { id: 'gengar', dex: 94, region: 'Kanto', name: 'Gengar', rarity: 'rare', rarityLabel: 'Raro', types: ['Fantasma', 'Veneno'], chassisType: 'Siniestro', isLegendary: false, color: '#735797', accent: '#ff6b87', shinyColor: '#dcdde1' },
+  { id: 'snorlax', dex: 143, region: 'Kanto', name: 'Snorlax', rarity: 'rare', rarityLabel: 'Raro', types: ['Normal'], chassisType: 'Hielo', isLegendary: false, color: '#486878', accent: '#f5e4c3', shinyColor: '#2e5cb8' },
+  { id: 'houndoom', dex: 229, region: 'Johto', name: 'Houndoom', rarity: 'rare', rarityLabel: 'Raro', types: ['Siniestro', 'Fuego'], chassisType: 'Siniestro', isLegendary: false, color: '#5c4b51', accent: '#ff6b4a', shinyColor: '#4aa3ff' },
+  { id: 'gardevoir', dex: 282, region: 'Hoenn', name: 'Gardevoir', rarity: 'rare', rarityLabel: 'Raro', types: ['Psíquico', 'Hada'], chassisType: 'Psíquico', isLegendary: false, color: '#7be39b', accent: '#ff8fa3', shinyColor: '#6fd3ff' },
+  { id: 'glalie', dex: 362, region: 'Hoenn', name: 'Glalie', rarity: 'rare', rarityLabel: 'Raro', types: ['Hielo'], chassisType: 'Hielo', isLegendary: false, color: '#96d9d6', accent: '#c9ffff', shinyColor: '#ff5c77' },
+  { id: 'scorbunny', dex: 813, region: 'Galar', name: 'Scorbunny', rarity: 'rare', rarityLabel: 'Raro', types: ['Fuego'], chassisType: 'Eléctrico', isLegendary: false, color: '#ff7a45', accent: '#ffe58f', shinyColor: '#ffd666' },
+  { id: 'sprigatito', dex: 906, region: 'Paldea', name: 'Sprigatito', rarity: 'rare', rarityLabel: 'Raro', types: ['Planta'], chassisType: 'Volador', isLegendary: false, color: '#80d79c', accent: '#c5ee88', shinyColor: '#b388ff' },
+
+  // Súper Raros / Épicos (10%)
+  { id: 'aerodactyl', dex: 142, region: 'Kanto', name: 'Aerodactyl', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Volador', 'Roca'], chassisType: 'Volador', isLegendary: false, color: '#a98ff3', accent: '#e0d4fc', shinyColor: '#ff85d0' },
+  { id: 'dragonite', dex: 149, region: 'Kanto', name: 'Dragonite', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Dragón', 'Volador'], chassisType: 'Volador', isLegendary: false, color: '#f5b041', accent: '#7de6e0', shinyColor: '#58d68d' },
+  { id: 'absol', dex: 359, region: 'Hoenn', name: 'Absol', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#d8dee9', accent: '#5e81ac', shinyColor: '#ff7a66' },
+  { id: 'lucario', dex: 448, region: 'Sinnoh', name: 'Lucario', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Lucha', 'Acero'], chassisType: 'Eléctrico', isLegendary: false, color: '#4aa3ff', accent: '#ffd166', shinyColor: '#f7d02c' },
+  { id: 'garchomp', dex: 445, region: 'Sinnoh', name: 'Garchomp', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Dragón', 'Tierra'], chassisType: 'Siniestro', isLegendary: false, color: '#546de5', accent: '#ff6b6b', shinyColor: '#303952' },
+  { id: 'greninja', dex: 658, region: 'Kalos', name: 'Greninja', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Agua', 'Siniestro'], chassisType: 'Siniestro', isLegendary: false, color: '#3867d6', accent: '#ff8fa3', shinyColor: '#2f3542' },
+  { id: 'ceruledge', dex: 937, region: 'Paldea', name: 'Ceruledge', rarity: 'super_rare', rarityLabel: 'Súper Raro', types: ['Fuego', 'Fantasma'], chassisType: 'Siniestro', isLegendary: false, color: '#6c5ce7', accent: '#ff7675', shinyColor: '#fdcb6e' },
+
   // Legendarios (5%) - Pasivas únicas y forma elemental perfecta
-  { id: 'zapdos', name: 'Zapdos', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Eléctrico', 'Volador'], chassisType: 'Eléctrico', isLegendary: true, color: '#ffd700', accent: '#fffacd', shinyColor: '#ffae00' },
-  { id: 'articuno', name: 'Articuno', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Hielo', 'Volador'], chassisType: 'Hielo', isLegendary: true, color: '#5bc0eb', accent: '#e0fbfc', shinyColor: '#b8e8fc' },
-  { id: 'lugia', name: 'Lugia', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Volador', 'Psíquico'], chassisType: 'Volador', isLegendary: true, color: '#b8d4e3', accent: '#7de6e0', shinyColor: '#ff8fa3' },
-  { id: 'mewtwo', name: 'Mewtwo', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Psíquico'], chassisType: 'Psíquico', isLegendary: true, color: '#c9a3f7', accent: '#ff7be5', shinyColor: '#7be36b' },
+  { id: 'zapdos', dex: 145, region: 'Kanto', name: 'Zapdos', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Eléctrico', 'Volador'], chassisType: 'Eléctrico', isLegendary: true, color: '#ffd700', accent: '#fffacd', shinyColor: '#ffae00' },
+  { id: 'articuno', dex: 144, region: 'Kanto', name: 'Articuno', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Hielo', 'Volador'], chassisType: 'Hielo', isLegendary: true, color: '#5bc0eb', accent: '#e0fbfc', shinyColor: '#b8e8fc' },
+  { id: 'lugia', dex: 249, region: 'Johto', name: 'Lugia', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Volador', 'Psíquico'], chassisType: 'Volador', isLegendary: true, color: '#b8d4e3', accent: '#7de6e0', shinyColor: '#ff8fa3' },
+  { id: 'rayquaza', dex: 384, region: 'Hoenn', name: 'Rayquaza', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Dragón', 'Volador'], chassisType: 'Volador', isLegendary: true, color: '#58d68d', accent: '#ffd166', shinyColor: '#2c3e50' },
+  { id: 'mewtwo', dex: 150, region: 'Kanto', name: 'Mewtwo', rarity: 'legendary', rarityLabel: 'Legendario', types: ['Psíquico'], chassisType: 'Psíquico', isLegendary: true, color: '#c9a3f7', accent: '#ff7be5', shinyColor: '#7be36b' },
 ];
 
 export const GACHA_ARCHETYPE_MOVES = {
@@ -238,9 +323,9 @@ export const GACHA_ARCHETYPE_MOVES = {
   },
   Psíquico: {
     basic: {
-      id: 'psicorrayo', name: 'Psicorrayo', type: 'Psíquico', slot: 'basic', shape: 'beam',
-      power: 65, cooldown: 0.42, range: 11.5, width: 0.82, pierce: 3, knockback: 2.5, beams: 1,
-      color: '#ff7be5', description: 'Haz psíquico perforante que evoluciona con el nivel.',
+      id: 'onda-psiquica', name: 'Psicoataque', type: 'Psíquico', slot: 'basic', shape: 'beam',
+      power: 62, cooldown: 0.44, range: 11.2, width: 0.82, pierce: 3, knockback: 2.5, beams: 1,
+      color: '#ff7be5', description: 'Haz mental perforante que evoluciona con el nivel.',
     },
     special: {
       id: 'onda-mental', name: 'Onda Mental', type: 'Psíquico', slot: 'special', shape: 'burst',
@@ -274,6 +359,23 @@ export function rollNormalGacha(randomFn = Math.random) {
   const pool = candidates.length > 0 ? candidates : GACHA_POOL;
   const index = Math.floor(randomFn() * pool.length);
   return { ...pool[index], rarity };
+}
+
+/**
+ * Tirada múltiple ×10 estilo PokéSurvivor: garantiza al menos un Pokémon Súper Raro o Legendario.
+ */
+export function rollTenNormalGacha(randomFn = Math.random) {
+  const results = [];
+  for (let i = 0; i < 10; i += 1) {
+    results.push(rollNormalGacha(randomFn));
+  }
+  const hasHighRarity = results.some((r) => r.rarity === 'super_rare' || r.rarity === 'legendary');
+  if (!hasHighRarity) {
+    const highPool = GACHA_POOL.filter((p) => p.rarity === 'super_rare' || p.rarity === 'legendary');
+    const pick = highPool[Math.floor(randomFn() * highPool.length)];
+    results[results.length - 1] = { ...pick };
+  }
+  return results;
 }
 
 export function rollShinyGacha(unlockedPokemonIds = [], randomFn = Math.random) {
