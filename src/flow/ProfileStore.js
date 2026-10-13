@@ -1,9 +1,10 @@
+import { GACHA_POOL } from '../data/gddSystems.js';
 import { PERMANENT_UPGRADES } from '../data/economy.js';
 import { REGIONS, STARTERS, getStarter } from '../data/regions.js';
 
 export const PROFILE_STORAGE_KEY = 'pokebattle-survivor.profile.v1';
 
-const STARTER_IDS = new Set(STARTERS.map((starter) => starter.id));
+const STARTER_IDS = new Set([...STARTERS.map((starter) => starter.id), ...GACHA_POOL.map((entry) => entry.id)]);
 const UPGRADE_IDS = new Set(PERMANENT_UPGRADES.map((upgrade) => upgrade.id));
 
 function getBrowserStorage() {
