@@ -1,3 +1,4 @@
+import { TYPE_SYNERGIES, LEVEL_UP_SKILLS, calculateDarkTypeCritChance, getEquippedItemModifiers } from '../data/gddSystems.js';
 import {
   BASE_PLAYER_STATS,
   HORDE_CONFIG,
@@ -42,7 +43,9 @@ export class RunSession {
         : ['Caterpie', 'Weedle'],
       starter: runConfig.starter ?? { id: 'bulbasaur', name: 'Bulbasaur', types: ['Planta', 'Veneno'], color: '#80d79c', accent: '#c5ee88' },
       upgrades: { ...(runConfig.upgrades ?? {}) },
+      equippedItemId: runConfig.equippedItemId ?? null,
     };
+    this.equippedItem = getEquippedItemModifiers(this.runConfig.equippedItemId);
     this.runConfig.starter = {
       ...this.runConfig.starter,
       types: [...(this.runConfig.starter.types ?? [])],
@@ -67,7 +70,8 @@ export class RunSession {
     this.elapsedSeconds = 0;
     this.wave = 1;
     this.spawnTimer = 0.85;
-    this.cooldowns = { basic: 0, special: 0 };
+    this.cooldowns = { basic: 0, special: 0, state: 0 };
+    this.stateBuffTimer = 0;
     this.lastAttack = null;
     this.attackSeq = 0;
 
@@ -148,21 +152,28 @@ export class RunSession {
     const maxHp = Math.round(
       BASE_PLAYER_STATS.maxHp * (1 + permHealthRank * 0.05) + vitalityRank * 25,
     );
+    const itemMods = getEquippedItemModifiers(this.runConfig.equippedItemId);
     const moveSpeed = BASE_PLAYER_STATS.moveSpeed
       * (1 + permMoveRank * 0.03)
-      * (1 + agileRank * 0.12);
+      * (1 + agileRank * 0.12)
+      * itemMods.moveSpeedMultiplier;
     const magnetRadius = BASE_PLAYER_STATS.magnetRadius
       * (1 + permPickupRank * 0.08)
       * (1 + magnetRank * 0.35);
     const pickupRadius = BASE_PLAYER_STATS.pickupRadius * (1 + magnetRank * 0.08);
     const xpMultiplier = (1 + permXpRank * 0.02) * (1 + magnetRank * 0.15);
 
-    const cadenceFactor = Math.max(0.28, (1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank));
+    const cadenceFactor = Math.max(
+      0.22,
+      ((1 - permCastRank * 0.03) * Math.pow(0.85, cadenceRank)) / itemMods.attackSpeedMultiplier,
+    );
     const specialCadenceFactor = Math.max(0.28, cadenceFactor * Math.pow(0.88, specialCadenceRank));
     const dashCooldown = BASE_PLAYER_STATS.dashCooldownSeconds * Math.pow(0.8, dashRank);
     const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
 
-    const sharedModifiers = { powerRank, prismRank, waveRank, cadenceFactor };
+    const stateDamageBonus = (this.stateBuffTimer ?? 0) > 0 ? LEVEL_UP_SKILLS.danza_espada.levels[1].damageMultiplier : 1;
+    const itemPowerMult = itemMods.physicalDamageMultiplier * stateDamageBonus;
+    const sharedModifiers = { powerRank, prismRank, waveRank, cadenceFactor, powerMultiplier: itemPowerMult };
     const specialModifiers = this.unlockedSkills.special
       ? {
           ...sharedModifiers,
@@ -439,6 +450,58 @@ export class RunSession {
   }
 
   /**
+   * Habilidad de Estado Activable (ej. Danza Espada: potencia el daño por 20s, 5s de enfriamiento).
+   * Se bloquea si el compañero equipa Cinta Elegida.
+   */
+  castStateSkill() {
+    if (this.status !== 'running' || !this.player.alive) {
+      return { fired: false, reason: 'not-running' };
+    }
+    if (this.equippedItem?.blocksStateMoves) {
+      return { fired: false, reason: 'blocked-by-choice-band' };
+    }
+    if (this.stateBuffTimer > 0 || this.cooldowns.state > 0) {
+      return { fired: false, reason: 'cooldown', remaining: this.cooldowns.state };
+    }
+    const spec = LEVEL_UP_SKILLS.danza_espada.levels[1];
+    this.stateBuffTimer = spec.durationSec;
+    this.cooldowns.state = spec.cooldownSec;
+    this.stats = this.computeStats();
+    return {
+      fired: true,
+      skillId: 'danza_espada',
+      durationSec: spec.durationSec,
+      damageMultiplier: spec.damageMultiplier,
+    };
+  }
+
+  /**
+   * Pasiva Legendaria Tipo Volador (estilo Megabonk):
+   * Al aterrizar tras planear genera un tornado físico que daña y lanza a los enemigos.
+   */
+  triggerLandingTornado() {
+    if (this.status !== 'running' || !this.player.alive) return { triggered: false, hits: [] };
+    if (!this.runConfig.starter.types.includes('Volador')) return { triggered: false, hits: [] };
+
+    const passive = TYPE_SYNERGIES.Volador.legendaryPassive;
+    const hits = [];
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0) continue;
+      const dx = enemy.x - this.player.x;
+      const dz = enemy.z - this.player.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= passive.tornadoRadius) {
+        const dir = dist > 0.001 ? { x: dx / dist, z: dz / dist } : { x: 0, z: -1 };
+        enemy.hp = Math.max(0, enemy.hp - passive.tornadoDamage);
+        enemy.knockbackX += dir.x * passive.knockbackForce;
+        enemy.knockbackZ += dir.z * passive.knockbackForce;
+        hits.push({ enemyId: enemy.id, damage: passive.tornadoDamage });
+      }
+    }
+    return { triggered: true, radius: passive.tornadoRadius, hits };
+  }
+
+  /**
    * Resuelve un ataque del compañero: qué alcanza, daño (STAB y efectividad), empuje,
    * derrotas y orbes. Devuelve `fired: false` con `reason` si no puede lanzarse.
    */
@@ -514,6 +577,11 @@ export class RunSession {
     }
 
     if (hits.length > 0) {
+      const totalHitDamage = hits.reduce((sum, hit) => sum + hit.damage, 0);
+      if (this.equippedItem?.lifestealRatio > 0 && this.player.alive) {
+        const heal = Math.max(1, Math.round(totalHitDamage * this.equippedItem.lifestealRatio));
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
+      }
       this.attackSeq += 1;
       this.lastAttack = {
         seq: this.attackSeq,
@@ -841,6 +909,14 @@ export class RunSession {
     this.elapsedSeconds += dt;
     this.cooldowns.basic = Math.max(0, this.cooldowns.basic - dt);
     this.cooldowns.special = Math.max(0, this.cooldowns.special - dt);
+    if (this.stateBuffTimer > 0) {
+      this.stateBuffTimer = Math.max(0, this.stateBuffTimer - dt);
+      if (this.stateBuffTimer === 0) {
+        this.stats = this.computeStats();
+      }
+    } else {
+      this.cooldowns.state = Math.max(0, this.cooldowns.state - dt);
+    }
     this.player.invulnerableTimer = Math.max(0, this.player.invulnerableTimer - dt);
     this.player.hitFlash = Math.max(0, this.player.hitFlash - dt);
     this.player.dashFlash = Math.max(0, this.player.dashFlash - dt);
