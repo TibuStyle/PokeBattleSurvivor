@@ -1,5 +1,8 @@
-import { getPokemonSpriteUrl, getEnemy3dSpriteUrl } from '../data/gddSystems.js';
+import { getPokemonGlbCandidateUrls } from '../data/gddSystems.js';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { HybridControls } from './HybridControls.js';
 import { RunSession } from './RunSession.js';
 import { CAMERA_RIG, MOUSE_LOOK, normalizeSensitivity, thirdPersonCameraPose } from './cameraRig.js';
@@ -77,9 +80,13 @@ export class GameApp {
     this.miniBossMarker = null;
     this.dashTrail = null;
     this.clock = new THREE.Clock();
-    this.textureLoader = new THREE.TextureLoader();
-    this.textureLoader.crossOrigin = 'anonymous';
-    this.spriteTextureCache = new Map();
+    this.dracoLoader = new DRACOLoader();
+    this.dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+    this.gltfLoader = new GLTFLoader();
+    this.gltfLoader.setDRACOLoader(this.dracoLoader);
+    this.glbCache = new Map();
+    this.glbPending = new Map();
+    this.activeMixers = [];
     this.aimLaserLine = null;
 
     this.handleResize = this.handleResize.bind(this);
@@ -92,8 +99,12 @@ export class GameApp {
     this.runConfig = runConfig;
     this.session = new RunSession(runConfig, {
       worldLimit: WORLD_LIMIT,
+      initialEnemies: 18,
+      maxActiveEnemies: 75,
       random: this.seededRandom(1337 + (runConfig.regionId?.length ?? 5) * 97),
     });
+    // En la vista 3D estilo Megabonk damos un plus de agilidad al jugador para surfear las colinas
+    this.session.stats.moveSpeed *= 1.28;
 
     this.createScene(runConfig);
     this.container.classList.add('is-active');
@@ -143,11 +154,13 @@ export class GameApp {
 
   createScene(runConfig) {
     const palette = runConfig.palette ?? ['#9bdc83', '#477956', '#dec17e'];
+    const isDesertVolcano = runConfig.regionId === 'hoenn';
+    const skyColor = isDesertVolcano ? '#e9b872' : (runConfig.regionId === 'johto' ? '#164e63' : '#1b4332');
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#111a18');
-    this.scene.fog = new THREE.Fog('#111a18', 32, 110);
+    this.scene.background = new THREE.Color(skyColor);
+    this.scene.fog = new THREE.FogExp2(skyColor, 0.014);
 
-    this.camera = new THREE.PerspectiveCamera(CAMERA_RIG.fov, window.innerWidth / window.innerHeight, 0.1, 180);
+    this.camera = new THREE.PerspectiveCamera(64, window.innerWidth / window.innerHeight, 0.1, 220);
     this.cameraYaw = Math.PI;
     this.cameraPitch = CAMERA_RIG.defaultPitch;
 
@@ -219,32 +232,46 @@ export class GameApp {
     const random = this.seededRandom(241);
     const leafTones = [leafColor, highlight, '#5eaa70', '#85c781'];
 
-    for (let index = 0; index < 68; index += 1) {
+    for (let index = 0; index < 64; index += 1) {
       const angle = random() * Math.PI * 2;
-      const radius = 10 + random() * 42;
+      const radius = 12 + random() * 40;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
-      const height = 1.2 + random() * 1.2;
+      const height = 3.2 + random() * 2.6;
       const tree = new THREE.Group();
-      tree.position.set(x, 0, z);
+      tree.position.set(x, this.getTerrainHeight(x, z), z);
       tree.rotation.y = random() * Math.PI * 2;
 
       const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.2, height, 5),
-        new THREE.MeshStandardMaterial({ color: trunkColor, roughness: 1 }),
+        new THREE.CylinderGeometry(0.28, 0.48, height, 6),
+        new THREE.MeshStandardMaterial({ color: '#6b4423', roughness: 0.92, flatShading: true }),
       );
       trunk.position.y = height / 2;
       tree.add(trunk);
 
-      const crown = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.72 + random() * 0.32, 0),
-        new THREE.MeshStandardMaterial({ color: leafTones[Math.floor(random() * leafTones.length)], roughness: 0.9 }),
-      );
-      crown.position.y = height + 0.45;
-      crown.scale.set(1, 0.92 + random() * 0.22, 0.95);
-      tree.add(crown);
-      tree.position.y = this.getTerrainHeight(x, z);
+      const crownColor = leafTones[Math.floor(random() * leafTones.length)];
+      const crownMat = new THREE.MeshStandardMaterial({ color: crownColor, roughness: 0.82, flatShading: true });
+      for (let c = 0; c < 3; c += 1) {
+        const puff = new THREE.Mesh(
+          new THREE.DodecahedronGeometry(1.35 + random() * 0.55, 1),
+          crownMat,
+        );
+        puff.position.set((c - 1) * 0.65, height + (c === 1 ? 0.85 : 0.35), (random() - 0.5) * 0.5);
+        tree.add(puff);
+      }
       this.scene.add(tree);
+    }
+
+    // Arcos de Piedra Gigantes 3D en el horizonte (inspirados en la captura 1 de Megabonk)
+    const archMat = new THREE.MeshStandardMaterial({ color: '#8d7b68', roughness: 0.9, flatShading: true });
+    for (let a = 0; a < 4; a += 1) {
+      const archAngle = (a / 4) * Math.PI * 2 + 0.4;
+      const ax = Math.cos(archAngle) * 38;
+      const az = Math.sin(archAngle) * 38;
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(6.5, 1.35, 7, 14, Math.PI), archMat);
+      arch.position.set(ax, this.getTerrainHeight(ax, az) - 0.5, az);
+      arch.rotation.y = archAngle + Math.PI / 2;
+      this.scene.add(arch);
     }
 
     // Rocas Low-Poly estilo Megabonk repartidas por las colinas
@@ -268,65 +295,189 @@ export class GameApp {
     }
   }
 
-  loadPokemon3dTexture(url, onLoad) {
-    if (this.spriteTextureCache.has(url)) {
-      const cached = this.spriteTextureCache.get(url);
-      onLoad?.(cached);
-      return cached;
+  /**
+   * Construye un modelo 3D articulado (cabeza, hocico, ojos 3D, orejas/alas, patas con animación de marcha y cola)
+   * que se muestra al instante y sirve de chasis 3D mientras se descarga el archivo .glb oficial.
+   */
+  buildArticulated3dPokemonMesh({ color = '#80d79c', accent = '#c5ee88', scale = 1, isFlying = false } = {}) {
+    const root = new THREE.Group();
+    const mainMat = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.38,
+      metalness: 0.08,
+      emissive: color,
+      emissiveIntensity: 0.14,
+      flatShading: true,
+    });
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: accent,
+      roughness: 0.32,
+      emissive: accent,
+      emissiveIntensity: 0.22,
+      flatShading: true,
+    });
+    const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+    const pupilMat = new THREE.MeshBasicMaterial({ color: '#111622' });
+
+    // Torso 3D
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.68 * scale, 0.58 * scale, 0.86 * scale), mainMat);
+    torso.position.set(0, 0.52 * scale, 0);
+    root.add(torso);
+
+    // Caparazón / lomo acentuado
+    const backShell = new THREE.Mesh(new THREE.DodecahedronGeometry(0.42 * scale, 0), accentMat);
+    backShell.position.set(0, 0.72 * scale, -0.05 * scale);
+    backShell.scale.set(1.05, 0.65, 1.15);
+    root.add(backShell);
+
+    // Cabeza 3D mirando hacia +Z (convención de rotationY en RunSession)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.58 * scale, 0.52 * scale, 0.56 * scale), mainMat);
+    head.position.set(0, 0.86 * scale, 0.42 * scale);
+    root.add(head);
+
+    // Ojos 3D y Orejas/Cuernos
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085 * scale, 8, 8), eyeWhiteMat);
+      eye.position.set(side * 0.2 * scale, 0.9 * scale, 0.68 * scale);
+      root.add(eye);
+
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.045 * scale, 6, 6), pupilMat);
+      pupil.position.set(side * 0.2 * scale, 0.9 * scale, 0.74 * scale);
+      root.add(pupil);
+
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.12 * scale, 0.34 * scale, 5), accentMat);
+      ear.position.set(side * 0.22 * scale, 1.22 * scale, 0.35 * scale);
+      ear.rotation.z = side * -0.25;
+      root.add(ear);
+
+      if (isFlying) {
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(0.75 * scale, 0.08 * scale, 0.42 * scale), accentMat);
+        wing.position.set(side * 0.62 * scale, 0.78 * scale, 0);
+        wing.rotation.z = side * 0.3;
+        root.add(wing);
+      }
     }
-    const texture = this.textureLoader.load(
-      url,
-      (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        onLoad?.(tex);
-      },
-      undefined,
-      () => {},
-    );
-    texture.colorSpace = THREE.SRGBColorSpace;
-    this.spriteTextureCache.set(url, texture);
-    return texture;
+
+    // Cola 3D
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16 * scale, 0.58 * scale, 5), accentMat);
+    tail.position.set(0, 0.64 * scale, -0.58 * scale);
+    tail.rotation.x = -Math.PI / 3;
+    root.add(tail);
+
+    // 4 Patas 3D articuladas
+    const legs = [];
+    const legOffsets = [
+      [-0.24, 0.28],
+      [0.24, 0.28],
+      [-0.24, -0.28],
+      [0.24, -0.28],
+    ];
+    for (const [lx, lz] of legOffsets) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18 * scale, 0.36 * scale, 0.2 * scale), mainMat);
+      leg.position.set(lx * scale, 0.18 * scale, lz * scale);
+      root.add(leg);
+      legs.push(leg);
+    }
+
+    return { root, mainMat, legs, tail };
+  }
+
+  /**
+   * Descarga y clona modelos 3D reales (.glb) desde Pokemon-3D-api/assets con soporte de animaciones.
+   */
+  loadPokemon3dGlb(pokemonIdOrSpecies, { shiny = false, targetHeight = 1.45 } = {}, onReady) {
+    const urls = getPokemonGlbCandidateUrls(pokemonIdOrSpecies, { shiny });
+    const cacheKey = `${pokemonIdOrSpecies}:${shiny ? 'shiny' : 'reg'}`;
+
+    const instantiateFromGltf = (gltf) => {
+      const clone = SkeletonUtils.clone(gltf.scene);
+      const box = new THREE.Box3().setFromObject(clone);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      const maxDim = Math.max(0.001, size.y, size.x * 0.8, size.z * 0.8);
+      const scale = targetHeight / maxDim;
+      clone.scale.setScalar(scale);
+
+      const scaledBox = new THREE.Box3().setFromObject(clone);
+      const scaledCenter = new THREE.Vector3();
+      scaledBox.getCenter(scaledCenter);
+      clone.position.x -= scaledCenter.x;
+      clone.position.z -= scaledCenter.z;
+      clone.position.y -= scaledBox.min.y;
+
+      let mixer = null;
+      if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(clone);
+        const clip = gltf.animations[0];
+        mixer.clipAction(clip).play();
+        this.activeMixers.push(mixer);
+      }
+      onReady?.(clone, mixer);
+    };
+
+    if (this.glbCache.has(cacheKey)) {
+      const cached = this.glbCache.get(cacheKey);
+      if (cached) instantiateFromGltf(cached);
+      return;
+    }
+
+    if (this.glbPending.has(cacheKey)) {
+      this.glbPending.get(cacheKey).push(instantiateFromGltf);
+      return;
+    }
+
+    this.glbPending.set(cacheKey, [instantiateFromGltf]);
+
+    const tryNextUrl = (index) => {
+      if (index >= urls.length) {
+        this.glbCache.set(cacheKey, null);
+        this.glbPending.delete(cacheKey);
+        return;
+      }
+      this.gltfLoader.load(
+        urls[index],
+        (gltf) => {
+          this.glbCache.set(cacheKey, gltf);
+          const callbacks = this.glbPending.get(cacheKey) ?? [];
+          this.glbPending.delete(cacheKey);
+          for (const cb of callbacks) cb(gltf);
+        },
+        undefined,
+        () => tryNextUrl(index + 1),
+      );
+    };
+
+    tryNextUrl(0);
   }
 
   addPlayer(starter) {
     this.player = new THREE.Group();
     this.player.position.set(0, 0, 0);
 
-    // Material emisivo de referencia para conservar compatibilidad con efectos de daño/dash
-    this.playerBodyMaterial = new THREE.MeshStandardMaterial({
+    const isFlying = starter.types?.includes('Volador');
+    const articulated = this.buildArticulated3dPokemonMesh({
       color: starter.color,
-      emissive: starter.color,
-      emissiveIntensity: 0.14,
-      transparent: true,
-      opacity: 0,
+      accent: starter.accent,
+      scale: 1.05,
+      isFlying,
     });
+    this.player.add(articulated.root);
+    this.playerBodyMaterial = articulated.mainMat;
+    this.playerArticulated = articulated;
 
-    // Render 3D oficial de Pokémon HOME / Pokémon GO como Billboard 3D en la escena
-    const spriteUrl = getPokemonSpriteUrl(starter.id, { shiny: Boolean(this.runConfig?.isShiny) });
-    const spriteMat = new THREE.SpriteMaterial({
-      color: '#ffffff',
-      transparent: true,
-      alphaTest: 0.05,
-    });
-    this.loadPokemon3dTexture(spriteUrl, (tex) => {
-      spriteMat.map = tex;
-      spriteMat.needsUpdate = true;
-    });
-
-    const pokeSprite = new THREE.Sprite(spriteMat);
-    pokeSprite.position.set(0, 1.05, 0);
-    pokeSprite.scale.set(1.95, 1.95, 1);
-    this.player.add(pokeSprite);
-    this.playerSprite = pokeSprite;
-
-    // Halo elemental sutil alrededor de la base del Pokémon
-    const orbit = new THREE.Mesh(
-      new THREE.TorusGeometry(0.68, 0.022, 6, 32),
-      new THREE.MeshBasicMaterial({ color: starter.accent, transparent: true, opacity: 0.55 }),
+    // Cargar el modelo 3D .glb real de tu Pokémon y reemplazar el chasis cuando esté listo
+    this.loadPokemon3dGlb(
+      starter.id,
+      { shiny: Boolean(this.runConfig?.isShiny), targetHeight: 1.55 },
+      (glbMesh) => {
+        if (!this.player) return;
+        articulated.root.visible = false;
+        this.player.add(glbMesh);
+      },
     );
-    orbit.position.y = 0.12;
-    orbit.rotation.x = Math.PI / 2;
-    this.player.add(orbit);
 
     this.scene.add(this.player);
 
@@ -596,13 +747,18 @@ export class GameApp {
       }
     }
 
-    if (this.playerSprite) {
-      if (this.session.player.hitFlash > 0) {
-        this.playerSprite.material.color.set('#ff6b7b');
-      } else if (this.session.player.dashTimer > 0) {
-        this.playerSprite.material.color.set('#7be5ff');
-      } else {
-        this.playerSprite.material.color.set('#ffffff');
+    for (const mixer of this.activeMixers) {
+      mixer.update(delta);
+    }
+    if (this.playerArticulated?.legs) {
+      const moveSpeed = Math.hypot(movement.x, movement.z);
+      const walkSwing = moveSpeed > 0.05 ? Math.sin(this.elapsed * 16) * 0.55 : 0;
+      this.playerArticulated.legs[0].rotation.x = walkSwing;
+      this.playerArticulated.legs[1].rotation.x = -walkSwing;
+      this.playerArticulated.legs[2].rotation.x = -walkSwing;
+      this.playerArticulated.legs[3].rotation.x = walkSwing;
+      if (this.playerArticulated.tail) {
+        this.playerArticulated.tail.rotation.z = Math.sin(this.elapsed * 8) * 0.25;
       }
     }
 
@@ -790,13 +946,32 @@ export class GameApp {
         this.scene.add(visual.group);
       }
 
+      // Físicas Megabonk: si el enemigo sufre golpe/retroceso, salta por los aires en 3D
+      if (enemy.hitFlash > 0.14 && visual.airY <= 0.02) {
+        visual.airVelY = enemy.isBoss ? 2.8 : 5.6;
+      }
+      if (visual.airY > 0 || visual.airVelY > 0) {
+        visual.airVelY -= 19.5 * 0.016;
+        visual.airY = Math.max(0, visual.airY + visual.airVelY * 0.016);
+        if (visual.airY === 0) visual.airVelY = 0;
+      }
+
+      const walkSwing = Math.sin(this.elapsed * 14 + enemy.x) * 0.45;
+      if (visual.articulated?.legs) {
+        visual.articulated.legs[0].rotation.x = walkSwing;
+        visual.articulated.legs[1].rotation.x = -walkSwing;
+        visual.articulated.legs[2].rotation.x = -walkSwing;
+        visual.articulated.legs[3].rotation.x = walkSwing;
+      }
+
       const bob = Math.sin(this.elapsed * (enemy.isBoss ? 3.5 : 6.2) + enemy.x * 0.5) * 0.05;
       const terrainY = this.getTerrainHeight(enemy.x, enemy.z);
-      visual.group.position.set(enemy.x, terrainY + Math.max(0, bob), enemy.z);
+      visual.group.position.set(enemy.x, terrainY + visual.airY + Math.max(0, bob), enemy.z);
       if (visual.crown) {
         visual.crown.rotation.y += 0.045;
       }
       visual.bodyGroup.rotation.y = enemy.rotationY;
+      visual.bodyGroup.rotation.x = visual.airY > 0.05 ? -0.35 : 0;
 
       const hpRatio = clamp01(enemy.hp / enemy.maxHp);
       visual.hpFill.scale.x = Math.max(0.001, hpRatio);
@@ -850,26 +1025,26 @@ export class GameApp {
       emissiveIntensity: 0.24,
     });
 
-    const baseScale = enemy.isBoss ? 1.85 : (enemy.isMiniBoss ? 1.45 : (enemy.isElite ? 1.25 : 1));
+    const baseScale = enemy.isBoss ? 2.1 : (enemy.isMiniBoss ? 1.55 : (enemy.isElite ? 1.3 : 0.95));
     void accentMaterial;
 
-    // Render 3D oficial de Pokémon HOME / GO para cada enemigo y jefe
-    const enemySpriteUrl = getEnemy3dSpriteUrl(enemy.species);
-    const enemySpriteMat = new THREE.SpriteMaterial({
-      color: '#ffffff',
-      transparent: true,
-      alphaTest: 0.05,
+    const articulated = this.buildArticulated3dPokemonMesh({
+      color: enemy.color,
+      accent: enemy.accent,
+      scale: baseScale,
+      isFlying: enemy.shape === 'flyer' || enemy.types?.includes('Volador'),
     });
-    this.loadPokemon3dTexture(enemySpriteUrl, (tex) => {
-      enemySpriteMat.map = tex;
-      enemySpriteMat.needsUpdate = true;
-    });
+    bodyGroup.add(articulated.root);
 
-    const spriteSize = 1.42 * baseScale;
-    const enemySprite = new THREE.Sprite(enemySpriteMat);
-    enemySprite.position.set(0, spriteSize * 0.56, 0);
-    enemySprite.scale.set(spriteSize, spriteSize, 1);
-    bodyGroup.add(enemySprite);
+    // Cargar el modelo 3D .glb real de la especie enemiga/jefe (cacheado por especie)
+    this.loadPokemon3dGlb(
+      enemy.species,
+      { shiny: false, targetHeight: 1.25 * baseScale },
+      (glbMesh) => {
+        articulated.root.visible = false;
+        bodyGroup.add(glbMesh);
+      },
+    );
 
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(enemy.radius * 1.05, 20),
@@ -940,7 +1115,9 @@ export class GameApp {
       hpFill,
       barWidth,
       crown,
-      enemySprite,
+      articulated,
+      airY: 0,
+      airVelY: 0,
     };
   }
 
@@ -1212,9 +1389,43 @@ export class GameApp {
     }
   }
 
+  spawnFloatingText3D(x, y, z, text, color = '#ffcb05', scaleSize = 1.35) {
+    if (!this.scene || typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.font = '900 54px Fredoka, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = '#0b1324';
+      ctx.strokeText(text, 128, 64);
+      ctx.fillStyle = color;
+      ctx.fillText(text, 128, 64);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.set(x, y, z);
+    sprite.scale.set(scaleSize * 1.6, scaleSize * 0.8, 1);
+    this.scene.add(sprite);
+    this.effects.push({ mesh: sprite, ttl: 0.65, remaining: 0.65, floatUp: 2.2 });
+  }
+
   spawnHitEffects(hits) {
     if (!this.scene) return;
     for (const hit of hits) {
+      const ty = this.getTerrainHeight(hit.x, hit.z);
+      this.spawnFloatingText3D(
+        hit.x + (Math.random() - 0.5) * 0.4,
+        ty + 1.55,
+        hit.z,
+        `${hit.damage}${hit.effectiveness > 1 ? '!' : ''}`,
+        hit.effectiveness > 1 ? '#ffcb05' : '#ffffff',
+        hit.effectiveness > 1 ? 1.45 : 1.1,
+      );
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.18, 0.46, 20),
         new THREE.MeshBasicMaterial({
@@ -1236,6 +1447,9 @@ export class GameApp {
   spawnDefeatEffects(defeated) {
     if (!this.scene) return;
     for (const enemy of defeated) {
+      const ty = this.getTerrainHeight(enemy.x, enemy.z);
+      const goldVal = enemy.isBoss ? 70 : (enemy.isMiniBoss ? 40 : (enemy.isElite ? 6 : 2));
+      this.spawnFloatingText3D(enemy.x, ty + 1.95, enemy.z, `+$${goldVal}`, '#ffd700', 1.55);
       const color = enemy.isBoss ? '#ff7be5' : (enemy.isMiniBoss ? '#ffd166' : (enemy.color || '#c7f27b'));
       const burst = new THREE.Mesh(
         new THREE.RingGeometry(0.25, 0.65, 24),
@@ -1358,6 +1572,9 @@ export class GameApp {
       effect.remaining -= delta;
       const ratio = Math.max(0, effect.remaining / effect.ttl);
       effect.mesh.material.opacity = ratio;
+      if (effect.floatUp) {
+        effect.mesh.position.y += delta * effect.floatUp;
+      }
       if (effect.grow) {
         const scale = 1 + (1 - ratio) * effect.grow;
         effect.mesh.scale.setScalar(scale);
@@ -1463,6 +1680,7 @@ export class GameApp {
     this.orbVisuals.clear();
     this.chestVisuals.clear();
     this.shrineVisuals.clear();
+    this.activeMixers = [];
     this.bossPortalMesh = null;
     if (this.bossMarker) {
       this.disposeObjectGroup(this.bossMarker);
