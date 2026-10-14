@@ -645,15 +645,18 @@ export class RunSession {
       // Impactos repetidos sobre el mismo enemigo (haces perforantes) hacen la mitad de daño.
       const repeatFactor = target.repeatIndex === 0 ? 1 : 0.5;
       let darkCritMult = 1;
+      const itemCritBonus = Number(this.equippedItem?.bonusCritChance) || 0;
       if (attackerTypes.includes('Siniestro') && this.player.hp < this.player.maxHp) {
         const { critChance, critDamage } = calculateDarkTypeCritChance(
           this.player.hp,
           this.player.maxHp,
           Boolean(this.runConfig.starter.isLegendary),
         );
-        if (this.random() < critChance) {
+        if (this.random() < Math.min(0.95, critChance + itemCritBonus)) {
           darkCritMult = critDamage;
         }
+      } else if (itemCritBonus > 0 && this.random() < itemCritBonus) {
+        darkCritMult = 2.0;
       }
       const damage = Math.max(1, Math.round(derived.power * stab * effectiveness * repeatFactor * darkCritMult));
 
@@ -910,6 +913,14 @@ export class RunSession {
       const dist = Math.hypot(dx, dz) || 1;
       this.player.x = clamp(this.player.x + (dx / dist) * 0.55, -this.worldLimit, this.worldLimit);
       this.player.z = clamp(this.player.z + (dz / dist) * 0.55, -this.worldLimit, this.worldLimit);
+
+      const thorns = Number(this.equippedItem?.thornsDamage) || 0;
+      if (thorns > 0 && sourceEnemy.hp > 0) {
+        sourceEnemy.hp = Math.max(1, sourceEnemy.hp - thorns);
+        sourceEnemy.hitFlash = 0.22;
+        sourceEnemy.knockbackX = -(dx / dist) * 7.5;
+        sourceEnemy.knockbackZ = -(dz / dist) * 7.5;
+      }
     }
 
     if (this.player.hp <= 0) {
@@ -1420,6 +1431,9 @@ export class RunSession {
         const earnedCoins = Math.round((loot.coins ?? 15) * coinMult);
         this.bonusCoins += earnedCoins;
 
+        if ((this.equippedItem?.chestHealBonus ?? 0) > 0) {
+          this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.equippedItem.chestHealBonus);
+        }
         if (loot.kind === 'heal') {
           const healAmount = Math.round(this.player.maxHp * (loot.healRatio ?? 0.45));
           this.player.hp = Math.min(this.player.maxHp, this.player.hp + healAmount);
@@ -1573,6 +1587,29 @@ export class RunSession {
       equippedItem: this.equippedItem,
       shrinesCompleted: this.shrinesCompleted,
       shieldCharges: this.shrineBuffs.shieldCharges,
+      radar: {
+        playerX: Number(this.player.x.toFixed(1)),
+        playerZ: Number(this.player.z.toFixed(1)),
+        rotationY: Number(this.player.rotationY.toFixed(2)),
+        worldLimit: this.worldLimit,
+        chests: this.chests.map((c) => ({ id: c.id, x: Number(c.x.toFixed(1)), z: Number(c.z.toFixed(1)) })),
+        shrines: this.shrines.map((s) => ({
+          id: s.id,
+          x: Number(s.x.toFixed(1)),
+          z: Number(s.z.toFixed(1)),
+          completed: Boolean(s.completed),
+        })),
+        bossPortal: this.bossPortal && !this.bossPortal.activated && !this.bossSpawned
+          ? { x: Number(this.bossPortal.x.toFixed(1)), z: Number(this.bossPortal.z.toFixed(1)) }
+          : null,
+        enemies: this.enemies.slice(0, 36).map((e) => ({
+          x: Number(e.x.toFixed(1)),
+          z: Number(e.z.toFixed(1)),
+          isBoss: Boolean(e.isBoss),
+          isMiniBoss: Boolean(e.isMiniBoss),
+          isElite: Boolean(e.isElite),
+        })),
+      },
       activeUpgrades,
       pendingChoices: this.pendingChoices ? [...this.pendingChoices] : null,
       miniBoss: miniBoss
