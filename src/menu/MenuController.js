@@ -403,9 +403,9 @@ export class MenuController {
           <div class="region-card__sprites">
             ${region.enemies.map((enemyName) => {
               const eDex = ENEMY_DEX_MAP[enemyName] ?? 10;
-              return `<img class="region-enemy-sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${eDex}.png" alt="${escapeHtml(enemyName)}" title="Horda: ${escapeHtml(enemyName)}" />`;
+              return `<img class="region-enemy-sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${eDex}.png" alt="${escapeHtml(enemyName)}" title="Horda: ${escapeHtml(enemyName)}" />`;
             }).join('')}
-            <img class="region-boss-sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${bossDex}.png" alt="${escapeHtml(region.boss)}" title="Jefe: ${escapeHtml(region.boss)}" />
+            <img class="region-boss-sprite" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${bossDex}.png" alt="${escapeHtml(region.boss)}" title="Jefe: ${escapeHtml(region.boss)}" />
           </div>
           <span class="region-card__state">${escapeHtml(stateLabel)}</span>
         </div>
@@ -676,7 +676,7 @@ export class MenuController {
       <div class="gacha-layout">
         <article class="gacha-panel gacha-panel--normal">
           <div class="gacha-panel__label">01 / GACHAPÓN REGIONAL</div>
-          <div class="gacha-illustration"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/145.png" alt="Zapdos" style="width:68px;height:68px;image-rendering:pixelated;" /></div>
+          <div class="gacha-illustration"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/145.png" alt="Zapdos" style="width:68px;height:68px;" /></div>
           <h2>Reclutamiento Normal</h2>
           <p>Desbloquea Pokémon de Kanto a Paldea. La tirada ×10 garantiza al menos un Súper Raro o Legendario. Los repetidos dan +15 Pokémonedas.</p>
           <div class="rarity-list">${RARITY_RATES.map((rarity) => `<div class="rarity-row"><span><i style="--rarity-color:${rarity.color}"></i>${rarity.label}</span><b>${rarity.percent}%</b></div>`).join('')}</div>
@@ -691,7 +691,7 @@ export class MenuController {
         </article>
         <article class="gacha-panel gacha-panel--shiny">
           <div class="gacha-panel__label">02 / GACHAPÓN VARIOCOLOR</div>
-          <div class="gacha-illustration gacha-illustration--shiny"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/150.png" alt="Shiny Mewtwo" style="width:68px;height:68px;image-rendering:pixelated;" /></div>
+          <div class="gacha-illustration gacha-illustration--shiny"><img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/shiny/150.png" alt="Shiny Mewtwo" style="width:68px;height:68px;" /></div>
           <h2>Gachapón Shiny ✨</h2>
           <p>Exclusivo para entrenadores: entrega únicamente el aspecto Variocolor (Shiny) de Pokémon que ya hayas registrado en tu Pokédex.</p>
           <div class="shiny-note"><span>✨</span><div><b>Solo especies ya desbloqueadas</b><small>Posee el mismo sistema de rarezas (60% / 25% / 10% / 5%).</small></div></div>
@@ -786,7 +786,7 @@ export class MenuController {
                   const isSelected = activePartner.id === display.id;
                   return `
                     <button type="button" class="button ${isSelected ? 'button--primary' : 'button--secondary'}" data-action="select-companion" data-companion-id="${display.id}" style="width:auto;padding:0.3rem 0.7rem;font-size:0.82rem;display:inline-flex;align-items:center;gap:6px;">
-                      <img src="${getPokemonSpriteUrl(display.id)}" alt="" style="width:28px;height:28px;image-rendering:pixelated;" />
+                      <img src="${getPokemonSpriteUrl(display.id)}" alt="" style="width:28px;height:28px;" />
                       ${escapeHtml(display.name)}
                     </button>
                   `;
@@ -836,6 +836,7 @@ export class MenuController {
 
     return `
       <div class="run-hud">
+        <div class="tps-crosshair" aria-hidden="true"><span></span></div>
         <div class="megabonk-top-xp" role="progressbar" aria-label="Barra superior de experiencia" aria-valuenow="${xpPercent}">
           <div id="megabonk-top-xp-fill" class="megabonk-top-xp__fill" style="width:${xpPercent}%"></div>
         </div>
