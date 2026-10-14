@@ -131,6 +131,14 @@ export class RunSession {
       charge: 0,
       activated: false,
     };
+    this.evolutionStage = 1;
+    this.currentSpeciesId = this.runConfig.starter.id;
+    this.currentSpeciesName = this.runConfig.starter.name;
+    this.pendingEvolutionEvent = null;
+    this.comboCount = 0;
+    this.maxCombo = 0;
+    this.comboTimer = 0;
+    this.orbitalTimer = 0.65;
     this.miniBossSpawned = false;
     this.miniBossDefeated = false;
     this.bossSpawned = false;
@@ -196,8 +204,9 @@ export class RunSession {
     const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
 
     const stateDamageBonus = (this.stateBuffTimer ?? 0) > 0 ? LEVEL_UP_SKILLS.danza_espada.levels[1].damageMultiplier : 1;
+    const evolutionMult = 1 + Math.max(0, (this.evolutionStage ?? 1) - 1) * 0.22;
     const shrineDmgMult = 1 + (this.shrineBuffs?.damageBonus ?? 0);
-    const itemPowerMult = itemMods.physicalDamageMultiplier * stateDamageBonus * shrineDmgMult;
+    const itemPowerMult = itemMods.physicalDamageMultiplier * stateDamageBonus * shrineDmgMult * evolutionMult;
     const sharedModifiers = { powerRank, prismRank, waveRank, cadenceFactor, powerMultiplier: itemPowerMult };
     const specialModifiers = this.unlockedSkills.special
       ? {
@@ -775,6 +784,12 @@ export class RunSession {
 
       this.enemies.splice(index, 1);
       this.kills += 1;
+      this.comboCount += 1;
+      this.comboTimer = 4.5;
+      if (this.comboCount > this.maxCombo) this.maxCombo = this.comboCount;
+      if (this.comboCount > 0 && this.comboCount % 15 === 0) {
+        this.bonusCoins += 10;
+      }
       if (enemy.isElite) this.eliteKills += 1;
 
       const orb = this.spawnOrb({
@@ -956,6 +971,23 @@ export class RunSession {
       this.xpToNext = getXpForNextLevel(this.level);
       this.pendingLevelUps += 1;
       levelsGained += 1;
+
+      const evo = resolveEvolutionForLevel(this.runConfig.starter.id, this.level);
+      if (evo && evo.stage > this.evolutionStage) {
+        const previousName = this.currentSpeciesName;
+        this.evolutionStage = evo.stage;
+        this.currentSpeciesId = evo.id;
+        this.currentSpeciesName = evo.name;
+        this.stats = this.computeStats();
+        this.player.maxHp += 30;
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + 40);
+        this.pendingEvolutionEvent = {
+          fromName: previousName,
+          toId: evo.id,
+          toName: evo.name,
+          stage: evo.stage,
+        };
+      }
     }
 
     if (this.pendingLevelUps > 0 && !this.pendingChoices && this.status === 'running') {
@@ -1226,9 +1258,78 @@ export class RunSession {
     this.#updateEnemies(dt, events);
     if (this.isFinished) return events;
 
+    if (this.comboTimer > 0) {
+      this.comboTimer = Math.max(0, this.comboTimer - dt);
+      if (this.comboTimer === 0) this.comboCount = 0;
+    }
+
+    // Guardianes Elementales Orbitantes (activos al evolucionar o al subir Prisma Psíquico)
+    const orbitalCount = this.getOrbitalCount();
+    if (orbitalCount > 0 && this.enemies.length > 0) {
+      this.orbitalTimer -= dt;
+      if (this.orbitalTimer <= 0) {
+        this.orbitalTimer = 0.55;
+        const orbitRadius = 2.45;
+        const orbitDamage = Math.max(8, Math.round(this.stats.moves.basic.power * 0.45));
+        for (let idx = this.enemies.length - 1; idx >= 0; idx -= 1) {
+          const enemy = this.enemies[idx];
+          if (enemy.hp <= 0) continue;
+          const d = Math.hypot(enemy.x - this.player.x, enemy.z - this.player.z);
+          if (d <= orbitRadius + enemy.radius) {
+            enemy.hp = Math.max(0, enemy.hp - orbitDamage);
+            enemy.hitFlash = 0.16;
+            this.totalDamageDealt += orbitDamage;
+            events.hits.push({
+              enemyId: enemy.id,
+              species: enemy.species,
+              x: enemy.x,
+              z: enemy.z,
+              damage: orbitDamage,
+              remainingHp: enemy.hp,
+              defeated: enemy.hp <= 0,
+              moveId: 'orbital-guardian',
+              color: this.runConfig.starter.accent || '#ffcb05',
+              effectiveness: 1,
+              stab: true,
+            });
+            if (enemy.hp <= 0) {
+              this.enemies.splice(idx, 1);
+              this.kills += 1;
+              this.comboCount += 1;
+              this.comboTimer = 4.5;
+              if (this.comboCount > this.maxCombo) this.maxCombo = this.comboCount;
+              const orb = this.spawnOrb({ x: enemy.x, z: enemy.z, value: enemy.xpValue });
+              events.defeated.push({
+                enemyId: enemy.id,
+                species: enemy.species,
+                isElite: !!enemy.isElite,
+                isMiniBoss: !!enemy.isMiniBoss,
+                isBoss: !!enemy.isBoss,
+                x: enemy.x,
+                z: enemy.z,
+                color: enemy.color,
+                orbId: orb.id,
+                bonusCoins: 0,
+                bonusTickets: 0,
+              });
+              if (enemy.isBoss) {
+                this.bossDefeated = true;
+                this.status = 'victory';
+              }
+            }
+          }
+        }
+      }
+    }
+
     this.#updateOrbs(dt, events);
     this.#updateChests(dt, events);
     this.#updateShrinesAndPortal(dt, events);
+
+    if (this.pendingEvolutionEvent) {
+      events.evolved = { ...this.pendingEvolutionEvent };
+      this.pendingEvolutionEvent = null;
+    }
 
     return events;
   }
@@ -1587,6 +1688,12 @@ export class RunSession {
       equippedItem: this.equippedItem,
       shrinesCompleted: this.shrinesCompleted,
       shieldCharges: this.shrineBuffs.shieldCharges,
+      evolutionStage: this.evolutionStage,
+      currentSpeciesId: this.currentSpeciesId,
+      currentSpeciesName: this.currentSpeciesName,
+      comboCount: this.comboCount,
+      maxCombo: this.maxCombo,
+      orbitalCount: this.getOrbitalCount(),
       radar: {
         playerX: Number(this.player.x.toFixed(1)),
         playerZ: Number(this.player.z.toFixed(1)),
