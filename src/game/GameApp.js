@@ -106,6 +106,8 @@ export class GameApp {
     this.projectiles3D = [];
     this.lockedTargetEnemy = null;
     this.moveVfxTextures = new Map();
+    this.orbitalGroup = null;
+    this.orbitalCountRendered = 0;
 
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
@@ -824,6 +826,12 @@ export class GameApp {
     this.player.add(ring);
     this.playerRing = ring;
 
+    // Grupo 3D de Guardianes Elementales Orbitantes (hojas, llamas, burbujas o rayos que giran alrededor)
+    this.orbitalGroup = new THREE.Group();
+    this.orbitalGroup.position.y = 0.78;
+    this.player.add(this.orbitalGroup);
+    this.orbitalCountRendered = 0;
+
     // Barra de PS y Escudo flotando bajo los pies, orientada siempre hacia la cámara
     const barPivot = new THREE.Group();
     const barGroup = new THREE.Group();
@@ -854,6 +862,93 @@ export class GameApp {
     this.player.add(barPivot);
     this.playerBarGroup = barPivot;
     this.playerWorldHpFill = hpBar;
+  }
+
+  /**
+   * Transforma en tiempo real el modelo 3D (.glb) de tu Pokémon cuando evoluciona en partida (Nv. 4 y Nv. 8).
+   */
+  triggerPlayerEvolution3D(evolved) {
+    if (!this.player || !this.playerAnimRig || !evolved) return;
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const ty = this.getTerrainHeight(px, pz);
+
+    // Triple anillo de evolución luminoso + cartel 3D flotante
+    this.spawnRingEffect(px, pz, '#00e5ff', 2.2, 0.65, 3.8);
+    this.spawnRingEffect(px, pz, '#ffcb05', 1.6, 0.55, 3.2);
+    this.spawnFloatingText3D(px, ty + 2.6, pz, `✨ ¡${evolved.toName.toUpperCase()}!`, '#ffcb05', 1.95);
+
+    const targetHeight = evolved.stage >= 3 ? 1.88 : 1.68;
+    this.loadPokemon3dGlb(
+      evolved.toId,
+      { shiny: Boolean(this.runConfig?.isShiny), targetHeight },
+      (glbNormGroup, _mixer, proceduralBones) => {
+        if (!this.player || !this.playerAnimRig) return;
+        if (this.playerGlbModel) {
+          this.playerAnimRig.remove(this.playerGlbModel);
+          this.disposeObjectGroup(this.playerGlbModel);
+        }
+        if (this.playerArticulated?.root) {
+          this.playerArticulated.root.visible = false;
+        }
+        this.playerGlbModel = glbNormGroup;
+        this.playerGlbBones = proceduralBones;
+        this.playerAnimRig.add(glbNormGroup);
+      },
+    );
+  }
+
+  /**
+   * Sincroniza las armas elementales 3D que orbitan alrededor del jugador al evolucionar o mejorar Prisma.
+   */
+  syncPlayerOrbitals(delta) {
+    if (!this.orbitalGroup || !this.session) return;
+    const desiredCount = this.session.getOrbitalCount?.() ?? 0;
+    if (desiredCount !== this.orbitalCountRendered) {
+      while (this.orbitalGroup.children.length > 0) {
+        const child = this.orbitalGroup.children[0];
+        this.orbitalGroup.remove(child);
+      }
+      this.orbitalCountRendered = desiredCount;
+
+      const types = this.runConfig?.starter?.types ?? [];
+      let kind = 'flame';
+      if (types.includes('Planta')) kind = 'leaf';
+      else if (types.includes('Agua')) kind = 'water';
+      else if (types.includes('Eléctrico')) kind = 'spark';
+      else if (types.includes('Hielo')) kind = 'ice';
+      else if (types.includes('Volador') || types.includes('Siniestro')) kind = 'slash';
+
+      const tex = this.getMoveSpriteTexture(
+        kind,
+        this.runConfig?.starter?.color || '#ffcb05',
+        this.runConfig?.starter?.accent || '#ffffff',
+      );
+
+      for (let i = 0; i < desiredCount; i += 1) {
+        const angle = (i / Math.max(1, desiredCount)) * Math.PI * 2;
+        const radius = 2.35;
+        const spMat = new THREE.SpriteMaterial({
+          map: tex,
+          transparent: true,
+          opacity: 0.94,
+          depthWrite: false,
+        });
+        const sp = new THREE.Sprite(spMat);
+        sp.scale.set(0.95, 0.95, 1);
+        sp.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        this.orbitalGroup.add(sp);
+      }
+    }
+
+    if (this.orbitalCountRendered > 0) {
+      this.orbitalGroup.rotation.y += delta * 3.8;
+      for (let i = 0; i < this.orbitalGroup.children.length; i += 1) {
+        const sp = this.orbitalGroup.children[i];
+        sp.position.y = Math.sin(this.elapsed * 5 + i * 1.4) * 0.18;
+        if (sp.material) sp.material.rotation += delta * 8;
+      }
+    }
   }
 
   addTargetMarker() {
@@ -1100,6 +1195,9 @@ export class GameApp {
         this.spawnFloatingText3D(done.x, ty + 2.4, done.z, shrineLabel, '#7bf2c7', 1.75);
       }
     }
+    if (events.evolved) {
+      this.triggerPlayerEvolution3D(events.evolved);
+    }
 
     const groundY = this.getTerrainHeight(this.session.player.x, this.session.player.z);
     // El grupo raíz sigue el terreno sin rotar, manteniendo el círculo y la barra de PS estables
@@ -1238,6 +1336,7 @@ export class GameApp {
 
     this.updateCamera(delta);
 
+    this.syncPlayerOrbitals(delta);
     this.syncEnemies(delta);
     this.syncOrbs(delta);
     this.syncChests(delta);
@@ -2653,6 +2752,8 @@ export class GameApp {
       snapshot.radar?.playerZ ?? 0,
       snapshot.coinsInRun ?? 0,
       snapshot.shrinesCompleted ?? 0,
+      snapshot.evolutionStage ?? 1,
+      snapshot.comboCount ?? 0,
       snapshot.lastChestLoot?.id ?? '',
       snapshot.activeUpgrades.map((u) => `${u.id}:${u.rank}`).join(','),
     ].join('|');
