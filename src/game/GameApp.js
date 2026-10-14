@@ -1,3 +1,4 @@
+import { getPokemonSpriteUrl, getEnemy3dSpriteUrl } from '../data/gddSystems.js';
 import * as THREE from 'three';
 import { HybridControls } from './HybridControls.js';
 import { RunSession } from './RunSession.js';
@@ -76,6 +77,10 @@ export class GameApp {
     this.miniBossMarker = null;
     this.dashTrail = null;
     this.clock = new THREE.Clock();
+    this.textureLoader = new THREE.TextureLoader();
+    this.textureLoader.crossOrigin = 'anonymous';
+    this.spriteTextureCache = new Map();
+    this.aimLaserLine = null;
 
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
@@ -263,59 +268,64 @@ export class GameApp {
     }
   }
 
+  loadPokemon3dTexture(url, onLoad) {
+    if (this.spriteTextureCache.has(url)) {
+      const cached = this.spriteTextureCache.get(url);
+      onLoad?.(cached);
+      return cached;
+    }
+    const texture = this.textureLoader.load(
+      url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        onLoad?.(tex);
+      },
+      undefined,
+      () => {},
+    );
+    texture.colorSpace = THREE.SRGBColorSpace;
+    this.spriteTextureCache.set(url, texture);
+    return texture;
+  }
+
   addPlayer(starter) {
     this.player = new THREE.Group();
     this.player.position.set(0, 0, 0);
 
+    // Material emisivo de referencia para conservar compatibilidad con efectos de daño/dash
     this.playerBodyMaterial = new THREE.MeshStandardMaterial({
       color: starter.color,
-      roughness: 0.3,
-      metalness: 0.08,
       emissive: starter.color,
       emissiveIntensity: 0.14,
+      transparent: true,
+      opacity: 0,
     });
-    // Familiar elemental original: malla construida con geometría procedural propia,
-    // sin modelos GLB/GLTF, texturas ni siluetas extraídas de juegos.
-    const body = new THREE.Mesh(new THREE.DodecahedronGeometry(0.56, 1), this.playerBodyMaterial);
-    body.position.y = 0.73;
-    body.scale.set(0.92, 0.88, 1.12);
-    this.player.add(body);
 
-    const accentMaterial = new THREE.MeshStandardMaterial({
-      color: starter.accent,
-      roughness: 0.26,
-      metalness: 0.16,
-      emissive: starter.accent,
-      emissiveIntensity: 0.24,
+    // Render 3D oficial de Pokémon HOME / Pokémon GO como Billboard 3D en la escena
+    const spriteUrl = getPokemonSpriteUrl(starter.id, { shiny: Boolean(this.runConfig?.isShiny) });
+    const spriteMat = new THREE.SpriteMaterial({
+      color: '#ffffff',
+      transparent: true,
+      alphaTest: 0.05,
     });
-    const crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), accentMaterial);
-    crest.position.set(0, 1.27, -0.05);
-    crest.scale.set(0.76, 1.35, 0.7);
-    this.player.add(crest);
+    this.loadPokemon3dTexture(spriteUrl, (tex) => {
+      spriteMat.map = tex;
+      spriteMat.needsUpdate = true;
+    });
 
-    for (const side of [-1, 1]) {
-      const fin = new THREE.Mesh(new THREE.TetrahedronGeometry(0.28, 0), accentMaterial);
-      fin.position.set(side * 0.49, 0.78, -0.02);
-      fin.rotation.z = side * -0.42;
-      fin.rotation.y = side * 0.22;
-      fin.scale.set(0.8, 1.15, 0.55);
-      this.player.add(fin);
-    }
+    const pokeSprite = new THREE.Sprite(spriteMat);
+    pokeSprite.position.set(0, 1.05, 0);
+    pokeSprite.scale.set(1.95, 1.95, 1);
+    this.player.add(pokeSprite);
+    this.playerSprite = pokeSprite;
 
-    const core = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.22, 0),
-      new THREE.MeshStandardMaterial({ color: '#fff1b5', emissive: '#ffcf67', emissiveIntensity: 0.8 }),
-    );
-    core.position.set(0, 0.76, -0.51);
-    this.player.add(core);
-
+    // Halo elemental sutil alrededor de la base del Pokémon
     const orbit = new THREE.Mesh(
-      new THREE.TorusGeometry(0.68, 0.018, 5, 28),
-      new THREE.MeshBasicMaterial({ color: starter.accent, transparent: true, opacity: 0.62 }),
+      new THREE.TorusGeometry(0.68, 0.022, 6, 32),
+      new THREE.MeshBasicMaterial({ color: starter.accent, transparent: true, opacity: 0.55 }),
     );
-    orbit.position.y = 0.75;
-    orbit.rotation.x = Math.PI / 2.4;
-    orbit.rotation.z = -0.38;
+    orbit.position.y = 0.12;
+    orbit.rotation.x = Math.PI / 2;
     this.player.add(orbit);
 
     this.scene.add(this.player);
@@ -367,13 +377,32 @@ export class GameApp {
   }
 
   addTargetMarker() {
-    this.targetMarker = new THREE.Mesh(
-      new THREE.RingGeometry(0.39, 0.47, 32),
-      new THREE.MeshBasicMaterial({ color: '#dcffe6', transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+    this.targetMarker = new THREE.Group();
+    const outerRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.32, 0.42, 28),
+      new THREE.MeshBasicMaterial({ color: '#00e5ff', transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
     );
-    this.targetMarker.rotation.x = -Math.PI / 2;
-    this.targetMarker.position.set(0, 0.035, -7);
+    const innerDot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.08, 16),
+      new THREE.MeshBasicMaterial({ color: '#ffcb05', transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    this.targetMarker.add(outerRing);
+    this.targetMarker.add(innerDot);
+    this.targetMarker.position.set(0, 1.0, -8.5);
     this.scene.add(this.targetMarker);
+
+    // Línea láser sutil de puntería TPS a la altura del pecho
+    const laserGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.95, 0),
+      new THREE.Vector3(0, 0.95, -8.5),
+    ]);
+    const laserMat = new THREE.LineBasicMaterial({
+      color: '#00e5ff',
+      transparent: true,
+      opacity: 0.38,
+    });
+    this.aimLaserLine = new THREE.Line(laserGeo, laserMat);
+    this.scene.add(this.aimLaserLine);
   }
 
   performDash() {
@@ -567,13 +596,35 @@ export class GameApp {
       }
     }
 
-    this.targetMarker.position.set(
-      this.session.player.x + aimDirection.x * 6.5,
-      0.035,
-      this.session.player.z + aimDirection.z * 6.5,
-    );
+    if (this.playerSprite) {
+      if (this.session.player.hitFlash > 0) {
+        this.playerSprite.material.color.set('#ff6b7b');
+      } else if (this.session.player.dashTimer > 0) {
+        this.playerSprite.material.color.set('#7be5ff');
+      } else {
+        this.playerSprite.material.color.set('#ffffff');
+      }
+    }
 
-    this.playerShadow.position.set(this.player.position.x, 0.015, this.player.position.z);
+    const aimDist = 8.5;
+    const aimX = this.session.player.x + aimDirection.x * aimDist;
+    const aimZ = this.session.player.z + aimDirection.z * aimDist;
+    const aimY = this.getTerrainHeight(aimX, aimZ) + this.height + 0.95;
+
+    this.targetMarker.position.set(aimX, aimY, aimZ);
+    if (this.camera) {
+      this.targetMarker.lookAt(this.camera.position);
+    }
+
+    if (this.aimLaserLine) {
+      const startY = this.player.position.y + 0.95;
+      const positions = this.aimLaserLine.geometry.attributes.position;
+      positions.setXYZ(0, this.player.position.x, startY, this.player.position.z);
+      positions.setXYZ(1, aimX, aimY, aimZ);
+      positions.needsUpdate = true;
+    }
+
+    this.playerShadow.position.set(this.player.position.x, groundY + 0.02, this.player.position.z);
     this.playerShadow.material.opacity = 0.42 - clamp01(this.height / 5) * 0.22;
     this.playerRing.rotation.z += delta * 0.55;
 
@@ -601,6 +652,7 @@ export class GameApp {
   /** Cámara baja detrás del compañero, con suavizado. `snap` la coloca sin transición. */
   updateCamera(delta, snap = false) {
     if (!this.camera || !this.player) return;
+    const groundY = this.getTerrainHeight(this.player.position.x, this.player.position.z);
     const pose = thirdPersonCameraPose(
       { x: this.player.position.x, z: this.player.position.z },
       this.cameraYaw,
@@ -608,6 +660,8 @@ export class GameApp {
       CAMERA_RIG,
       this.cameraPitch,
     );
+    pose.position.y += groundY;
+    pose.lookAt.y += groundY;
     const desired = new THREE.Vector3(pose.position.x, pose.position.y, pose.position.z);
     if (snap) {
       this.camera.position.copy(desired);
@@ -752,11 +806,13 @@ export class GameApp {
       if (enemy.hitFlash > 0) {
         visual.bodyMaterial.emissive.set('#ffffff');
         visual.bodyMaterial.emissiveIntensity = 0.85;
-        visual.bodyGroup.scale.setScalar(1.08);
+        visual.bodyGroup.scale.setScalar(1.12);
+        if (visual.enemySprite) visual.enemySprite.material.color.set('#ff9999');
       } else {
         visual.bodyMaterial.emissive.set(enemy.color);
         visual.bodyMaterial.emissiveIntensity = enemy.isBoss || enemy.isMiniBoss ? 0.32 : (enemy.isElite ? 0.22 : 0.12);
         visual.bodyGroup.scale.setScalar(1);
+        if (visual.enemySprite) visual.enemySprite.material.color.set('#ffffff');
       }
 
       if (visual.auraRing) {
@@ -794,47 +850,26 @@ export class GameApp {
       emissiveIntensity: 0.24,
     });
 
-    const baseScale = enemy.isBoss ? 1.6 : (enemy.isMiniBoss ? 1.3 : (enemy.isElite ? 1.15 : 1));
+    const baseScale = enemy.isBoss ? 1.85 : (enemy.isMiniBoss ? 1.45 : (enemy.isElite ? 1.25 : 1));
+    void accentMaterial;
 
-    if (enemy.shape === 'larva' || enemy.shape === 'stinger') {
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.36 * baseScale, 12, 10), bodyMaterial);
-      head.position.set(0, 0.42 * baseScale, 0.18 * baseScale);
-      bodyGroup.add(head);
+    // Render 3D oficial de Pokémon HOME / GO para cada enemigo y jefe
+    const enemySpriteUrl = getEnemy3dSpriteUrl(enemy.species);
+    const enemySpriteMat = new THREE.SpriteMaterial({
+      color: '#ffffff',
+      transparent: true,
+      alphaTest: 0.05,
+    });
+    this.loadPokemon3dTexture(enemySpriteUrl, (tex) => {
+      enemySpriteMat.map = tex;
+      enemySpriteMat.needsUpdate = true;
+    });
 
-      const seg1 = new THREE.Mesh(new THREE.SphereGeometry(0.28 * baseScale, 10, 8), bodyMaterial);
-      seg1.position.set(0, 0.34 * baseScale, -0.18 * baseScale);
-      bodyGroup.add(seg1);
-
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.11 * baseScale, 0.32 * baseScale, 5), accentMaterial);
-      horn.position.set(0, 0.68 * baseScale, 0.34 * baseScale);
-      horn.rotation.x = Math.PI / 4;
-      bodyGroup.add(horn);
-    } else if (enemy.shape === 'miniboss') {
-      const core = new THREE.Mesh(new THREE.DodecahedronGeometry(0.62 * baseScale, 0), bodyMaterial);
-      core.position.y = 0.85 * baseScale;
-      bodyGroup.add(core);
-
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.9 * baseScale, 0.16 * baseScale, 0.7 * baseScale), accentMaterial);
-      plate.position.y = 0.4 * baseScale;
-      bodyGroup.add(plate);
-    } else if (enemy.shape === 'boss') {
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.72 * baseScale, 1), bodyMaterial);
-      core.position.y = 0.95;
-      bodyGroup.add(core);
-
-      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.06, 8, 28), accentMaterial);
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = 0.95;
-      bodyGroup.add(crown);
-    } else {
-      const torso = new THREE.Mesh(new THREE.DodecahedronGeometry(0.44 * baseScale, 0), bodyMaterial);
-      torso.position.y = 0.48 * baseScale;
-      bodyGroup.add(torso);
-
-      const crest = new THREE.Mesh(new THREE.BoxGeometry(0.26 * baseScale, 0.18 * baseScale, 0.38 * baseScale), accentMaterial);
-      crest.position.set(0, 0.62 * baseScale, 0.22 * baseScale);
-      bodyGroup.add(crest);
-    }
+    const spriteSize = 1.42 * baseScale;
+    const enemySprite = new THREE.Sprite(enemySpriteMat);
+    enemySprite.position.set(0, spriteSize * 0.56, 0);
+    enemySprite.scale.set(spriteSize, spriteSize, 1);
+    bodyGroup.add(enemySprite);
 
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(enemy.radius * 1.05, 20),
@@ -905,6 +940,7 @@ export class GameApp {
       hpFill,
       barWidth,
       crown,
+      enemySprite,
     };
   }
 
@@ -1129,11 +1165,12 @@ export class GameApp {
 
   spawnBeamEffects(beams) {
     if (!this.scene) return;
-    const beamY = 0.76 + this.height;
 
     for (const beamData of beams) {
-      const start = new THREE.Vector3(beamData.startX, beamY, beamData.startZ);
-      const end = new THREE.Vector3(beamData.endX, beamY, beamData.endZ);
+      const startY = this.getTerrainHeight(beamData.startX, beamData.startZ) + this.height + 0.92;
+      const endY = this.getTerrainHeight(beamData.endX, beamData.endZ) + 0.88;
+      const start = new THREE.Vector3(beamData.startX, startY, beamData.startZ);
+      const end = new THREE.Vector3(beamData.endX, endY, beamData.endZ);
       const delta = end.clone().sub(start);
       const length = Math.max(0.2, delta.length());
       const midpoint = start.clone().add(end).multiplyScalar(0.5);

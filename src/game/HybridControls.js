@@ -36,7 +36,7 @@ export class HybridControls {
   constructor({
     element,
     cameraYaw = Math.PI,
-    cameraPitch = -0.08,
+    cameraPitch = 0.02,
     mouseSensitivity = MOUSE_LOOK.defaultSensitivity,
     sensitivity,
     onPointerLockChange = () => {},
@@ -270,6 +270,11 @@ export class HybridControls {
     if (typeof document !== 'undefined' && document.pointerLockElement === this.element) {
       this.updateCameraFromMouse(e.movementX, e.movementY);
       return;
+    }
+
+    // Modo Shooter 3ª Persona (TPS): si mueve el ratón sobre el canvas, permite girar suavemente la mira
+    if (Number.isFinite(e.movementX) && Math.abs(e.movementX) > 0) {
+      this.updateCameraFromMouse(e.movementX * 0.65, (e.movementY ?? 0) * 0.45);
     }
 
     const rect = this.element?.getBoundingClientRect?.() ?? {

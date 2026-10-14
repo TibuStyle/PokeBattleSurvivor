@@ -10,14 +10,14 @@
  */
 
 export const CAMERA_RIG = Object.freeze({
-  fov: 52,
-  distance: 7.4,
-  baseHeight: 2.35,
-  jumpLift: 0.3,
-  lookAhead: 2.6,
-  lookHeight: 1.05,
-  defaultPitch: -0.08,
-  minPitch: -0.52,
+  fov: 55,
+  distance: 6.8,
+  baseHeight: 2.45,
+  jumpLift: 0.38,
+  lookAhead: 4.5,
+  lookHeight: 1.45,
+  defaultPitch: 0.02,
+  minPitch: -0.38,
   maxPitch: 0.52,
   turnRate: 9.5,
   smoothing: 9,
