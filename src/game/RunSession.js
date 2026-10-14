@@ -121,6 +121,16 @@ export class RunSession {
     this.chestSpawnTimer = 6.0;
     this.lastChestLoot = null;
     this.rerollsRemaining = 2;
+    this.shrines = [];
+    this.shrinesCompleted = 0;
+    this.shrineBuffs = { damageBonus: 0, speedBonus: 0, shieldCharges: 0 };
+    this.bossPortal = {
+      x: 18,
+      z: -18,
+      radius: 2.4,
+      charge: 0,
+      activated: false,
+    };
     this.miniBossSpawned = false;
     this.miniBossDefeated = false;
     this.bossSpawned = false;
@@ -134,6 +144,8 @@ export class RunSession {
       this.spawnHordeWave(initialCount);
       this.spawnChest({ distance: 9.5 });
       this.spawnChest({ distance: 14.0 });
+      this.spawnShrine({ distance: 13.0, angle: 0.9 });
+      this.spawnShrine({ distance: 17.5, angle: 3.8 });
     }
   }
 
@@ -163,10 +175,12 @@ export class RunSession {
       BASE_PLAYER_STATS.maxHp * (1 + permHealthRank * 0.05) + vitalityRank * 25,
     );
     const itemMods = getEquippedItemModifiers(this.runConfig.equippedItemId);
+    const shrineSpeedMult = 1 + (this.shrineBuffs?.speedBonus ?? 0);
     const moveSpeed = BASE_PLAYER_STATS.moveSpeed
       * (1 + permMoveRank * 0.03)
       * (1 + agileRank * 0.12)
-      * itemMods.moveSpeedMultiplier;
+      * itemMods.moveSpeedMultiplier
+      * shrineSpeedMult;
     const magnetRadius = BASE_PLAYER_STATS.magnetRadius
       * (1 + permPickupRank * 0.08)
       * (1 + magnetRank * 0.35);
@@ -182,7 +196,8 @@ export class RunSession {
     const dashDistance = BASE_PLAYER_STATS.dashDistance * (1 + dashRank * 0.15);
 
     const stateDamageBonus = (this.stateBuffTimer ?? 0) > 0 ? LEVEL_UP_SKILLS.danza_espada.levels[1].damageMultiplier : 1;
-    const itemPowerMult = itemMods.physicalDamageMultiplier * stateDamageBonus;
+    const shrineDmgMult = 1 + (this.shrineBuffs?.damageBonus ?? 0);
+    const itemPowerMult = itemMods.physicalDamageMultiplier * stateDamageBonus * shrineDmgMult;
     const sharedModifiers = { powerRank, prismRank, waveRank, cadenceFactor, powerMultiplier: itemPowerMult };
     const specialModifiers = this.unlockedSkills.special
       ? {
@@ -472,6 +487,41 @@ export class RunSession {
     };
     this.chests.push(chest);
     return chest;
+  }
+
+  /**
+   * Genera un Santuario de Carga (Charge Shrine de Megabonk -> Altar Teracristal Pokémon).
+   * Al mantenerse dentro de su radio se carga de 0 a 100% y otorga una bendición.
+   */
+  spawnShrine(overrides = {}) {
+    const angle = Number.isFinite(overrides.angle) ? overrides.angle : this.random() * Math.PI * 2;
+    const distance = Number.isFinite(overrides.distance) ? overrides.distance : 12 + this.random() * 14;
+    const x = Number.isFinite(overrides.x)
+      ? overrides.x
+      : clamp(this.player.x + Math.cos(angle) * distance, -this.worldLimit + 4, this.worldLimit - 4);
+    const z = Number.isFinite(overrides.z)
+      ? overrides.z
+      : clamp(this.player.z + Math.sin(angle) * distance, -this.worldLimit + 4, this.worldLimit - 4);
+
+    const rewards = [
+      { id: 'tera_might', name: 'Bendición Teracristal: +20% Daño', kind: 'damage', value: 0.2 },
+      { id: 'tera_shield', name: 'Escudo Guardián: Absorbe 1 golpe + Cura 35 PS', kind: 'shield', value: 1 },
+      { id: 'tera_wind', name: 'Viento Afín: +15% Velocidad', kind: 'speed', value: 0.15 },
+    ];
+    const reward = overrides.reward ?? rewards[this.shrines.length % rewards.length];
+
+    const shrine = {
+      id: `shrine-${this.nextEntityId++}`,
+      x,
+      z,
+      radius: 2.5,
+      charge: 0,
+      chargeRequired: 2.2, // segundos dentro del área para completar
+      completed: false,
+      reward,
+    };
+    this.shrines.push(shrine);
+    return shrine;
   }
 
   /**
@@ -843,6 +893,11 @@ export class RunSession {
     if (this.player.invulnerableTimer > 0 || this.player.dashTimer > 0) {
       return { damaged: false, reason: 'invulnerable', hp: this.player.hp };
     }
+    if ((this.shrineBuffs?.shieldCharges ?? 0) > 0) {
+      this.shrineBuffs.shieldCharges -= 1;
+      this.player.invulnerableTimer = BASE_PLAYER_STATS.contactGraceSeconds;
+      return { damaged: false, reason: 'shrine-shield', hp: this.player.hp };
+    }
 
     const safeDamage = Math.max(1, Math.round(Number(amount) || 0));
     this.player.hp = Math.max(0, this.player.hp - safeDamage);
@@ -1162,6 +1217,7 @@ export class RunSession {
 
     this.#updateOrbs(dt, events);
     this.#updateChests(dt, events);
+    this.#updateShrinesAndPortal(dt, events);
 
     return events;
   }
@@ -1394,6 +1450,52 @@ export class RunSession {
     }
   }
 
+  #updateShrinesAndPortal(dt, events) {
+    events.shrinesCompleted ??= [];
+    for (const shrine of this.shrines) {
+      if (shrine.completed) continue;
+      const dist = Math.hypot(this.player.x - shrine.x, this.player.z - shrine.z);
+      if (dist <= shrine.radius) {
+        shrine.charge = Math.min(shrine.chargeRequired, shrine.charge + dt);
+        if (shrine.charge >= shrine.chargeRequired) {
+          shrine.completed = true;
+          this.shrinesCompleted += 1;
+          if (shrine.reward.kind === 'damage') {
+            this.shrineBuffs.damageBonus += shrine.reward.value;
+          } else if (shrine.reward.kind === 'speed') {
+            this.shrineBuffs.speedBonus += shrine.reward.value;
+          } else if (shrine.reward.kind === 'shield') {
+            this.shrineBuffs.shieldCharges += 1;
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 35);
+          }
+          this.stats = this.computeStats();
+          events.shrinesCompleted.push({
+            shrineId: shrine.id,
+            x: shrine.x,
+            z: shrine.z,
+            reward: shrine.reward,
+          });
+        }
+      } else {
+        shrine.charge = Math.max(0, shrine.charge - dt * 0.35);
+      }
+    }
+
+    // Portal del Jefe (Boss Portal estilo Megabonk): permite invocar al Jefe Regional al acercarse
+    if (this.bossPortal && !this.bossPortal.activated && !this.bossSpawned) {
+      const distToPortal = Math.hypot(this.player.x - this.bossPortal.x, this.player.z - this.bossPortal.z);
+      if (distToPortal <= this.bossPortal.radius) {
+        this.bossPortal.charge += dt;
+        if (this.bossPortal.charge >= 1.5) {
+          this.bossPortal.activated = true;
+          events.bossSpawned = this.spawnBoss({ x: this.bossPortal.x, z: this.bossPortal.z - 4 });
+        }
+      } else {
+        this.bossPortal.charge = Math.max(0, this.bossPortal.charge - dt * 0.5);
+      }
+    }
+  }
+
   #attackSnapshot(slot) {
     const move = this.moveset[slot];
     const derived = this.stats.moves[slot];
@@ -1469,6 +1571,8 @@ export class RunSession {
       coinsInRun: this.bonusCoins + this.kills * 2,
       lastChestLoot: this.lastChestLoot,
       equippedItem: this.equippedItem,
+      shrinesCompleted: this.shrinesCompleted,
+      shieldCharges: this.shrineBuffs.shieldCharges,
       activeUpgrades,
       pendingChoices: this.pendingChoices ? [...this.pendingChoices] : null,
       miniBoss: miniBoss

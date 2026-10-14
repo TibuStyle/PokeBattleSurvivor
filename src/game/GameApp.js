@@ -69,6 +69,8 @@ export class GameApp {
     this.enemyVisuals = new Map();
     this.orbVisuals = new Map();
     this.chestVisuals = new Map();
+    this.shrineVisuals = new Map();
+    this.bossPortalMesh = null;
     this.playerWorldHpFill = null;
     this.bossMarker = null;
     this.miniBossMarker = null;
@@ -102,6 +104,7 @@ export class GameApp {
     this.syncEnemies(0);
     this.syncOrbs(0);
     this.syncChests(0);
+    this.syncShrines(0);
 
     this.controls = new HybridControls({
       element: this.renderer.domElement,
@@ -529,6 +532,11 @@ export class GameApp {
         this.spawnRingEffect(opened.x, opened.z, '#ffd166', 1.4, 0.45, 2.8);
       }
     }
+    if (events.shrinesCompleted?.length > 0) {
+      for (const done of events.shrinesCompleted) {
+        this.spawnRingEffect(done.x, done.z, '#4cd137', 2.6, 0.55, 3.2);
+      }
+    }
 
     const groundY = this.getTerrainHeight(this.session.player.x, this.session.player.z);
     this.player.position.set(
@@ -574,6 +582,7 @@ export class GameApp {
     this.syncEnemies(delta);
     this.syncOrbs(delta);
     this.syncChests(delta);
+    this.syncShrines(delta);
     this.updateWorldMarkers();
     this.emitHudUpdate(false);
 
@@ -1021,6 +1030,103 @@ export class GameApp {
     return { group };
   }
 
+  syncShrines(delta) {
+    if (!this.scene || !this.session) return;
+
+    // Renderizar Santuarios de Carga (Altares Teracristal estilo Megabonk)
+    for (const shrine of this.session.shrines ?? []) {
+      let visual = this.shrineVisuals.get(shrine.id);
+      if (!visual) {
+        visual = this.createShrineVisual(shrine);
+        this.shrineVisuals.set(shrine.id, visual);
+        this.scene.add(visual.group);
+      }
+      const ty = this.getTerrainHeight(shrine.x, shrine.z);
+      visual.group.position.set(shrine.x, ty, shrine.z);
+      visual.crystal.rotation.y += delta * (shrine.completed ? 0.5 : 2.2);
+      visual.crystal.position.y = 1.25 + Math.sin(this.elapsed * 3) * 0.15;
+
+      const progress = Math.min(1, shrine.charge / Math.max(0.1, shrine.chargeRequired));
+      visual.chargeRing.scale.setScalar(0.3 + progress * 0.7);
+      visual.chargeRing.material.color.set(shrine.completed ? '#ffd700' : '#4cd137');
+      visual.crystal.material.color.set(shrine.completed ? '#ffd700' : '#00e5ff');
+    }
+
+    // Renderizar el Portal del Jefe (Arco Ultraumbral estilo Megabonk)
+    const portal = this.session.bossPortal;
+    if (portal && !portal.activated && !this.session.bossSpawned) {
+      if (!this.bossPortalMesh) {
+        this.bossPortalMesh = this.createBossPortalVisual();
+        this.scene.add(this.bossPortalMesh);
+      }
+      const py = this.getTerrainHeight(portal.x, portal.z);
+      this.bossPortalMesh.position.set(portal.x, py, portal.z);
+      this.bossPortalMesh.visible = true;
+      this.bossPortalMesh.children[0].rotation.z += delta * 1.8;
+    } else if (this.bossPortalMesh) {
+      this.bossPortalMesh.visible = false;
+    }
+  }
+
+  createShrineVisual(shrine) {
+    const group = new THREE.Group();
+    const pedMat = new THREE.MeshStandardMaterial({ color: '#4a5568', roughness: 0.8 });
+    const crystalMat = new THREE.MeshStandardMaterial({
+      color: '#00e5ff',
+      emissive: '#00b4d8',
+      emissiveIntensity: 0.65,
+      roughness: 0.15,
+      metalness: 0.3,
+    });
+
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 0.45, 6), pedMat);
+    pedestal.position.y = 0.22;
+    group.add(pedestal);
+
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.48, 0), crystalMat);
+    crystal.position.y = 1.25;
+    crystal.scale.set(0.85, 1.45, 0.85);
+    group.add(crystal);
+
+    const outerRing = new THREE.Mesh(
+      new THREE.RingGeometry(shrine.radius * 0.92, shrine.radius, 36),
+      new THREE.MeshBasicMaterial({ color: '#4cd137', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    outerRing.rotation.x = -Math.PI / 2;
+    outerRing.position.y = 0.05;
+    group.add(outerRing);
+
+    const chargeRing = new THREE.Mesh(
+      new THREE.CircleGeometry(shrine.radius * 0.9, 32),
+      new THREE.MeshBasicMaterial({ color: '#4cd137', transparent: true, opacity: 0.26, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    chargeRing.rotation.x = -Math.PI / 2;
+    chargeRing.position.y = 0.04;
+    group.add(chargeRing);
+
+    return { group, crystal, chargeRing };
+  }
+
+  createBossPortalVisual() {
+    const group = new THREE.Group();
+    const vortex = new THREE.Mesh(
+      new THREE.TorusGeometry(1.45, 0.14, 10, 32),
+      new THREE.MeshStandardMaterial({ color: '#ff4757', emissive: '#ff1e42', emissiveIntensity: 0.85 }),
+    );
+    vortex.position.y = 1.65;
+    group.add(vortex);
+
+    const floorZone = new THREE.Mesh(
+      new THREE.RingGeometry(2.0, 2.4, 36),
+      new THREE.MeshBasicMaterial({ color: '#ff4757', transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    floorZone.rotation.x = -Math.PI / 2;
+    floorZone.position.y = 0.06;
+    group.add(floorZone);
+
+    return group;
+  }
+
   spawnBeamEffects(beams) {
     if (!this.scene) return;
     const beamY = 0.76 + this.height;
@@ -1319,6 +1425,8 @@ export class GameApp {
     this.enemyVisuals.clear();
     this.orbVisuals.clear();
     this.chestVisuals.clear();
+    this.shrineVisuals.clear();
+    this.bossPortalMesh = null;
     if (this.bossMarker) {
       this.disposeObjectGroup(this.bossMarker);
       this.bossMarker = null;
