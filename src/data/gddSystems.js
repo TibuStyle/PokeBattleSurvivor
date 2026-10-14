@@ -72,6 +72,17 @@ export function getPokemonGlbUrl(pokemonId, { shiny = false } = {}) {
   return `https://raw.githubusercontent.com/Pokemon-3D-api/assets/main/models/opt/${folder}/${dexNumber}.glb`;
 }
 
+export function getPokemonGlbCandidateUrls(pokemonIdOrSpecies, { shiny = false } = {}) {
+  const key = String(pokemonIdOrSpecies || '').toLowerCase();
+  const dexNumber = POKEMON_DEX_IDS[key] ?? ENEMY_SPECIES_DEX_IDS[pokemonIdOrSpecies] ?? 1;
+  const folder = shiny ? 'shiny' : 'regular';
+  return [
+    `https://raw.githubusercontent.com/Pokemon-3D-api/assets/main/models/opt/${folder}/${dexNumber}.glb`,
+    `https://raw.githubusercontent.com/Sudhanshu-Ambastha/Pokemon-3D-api/main/models/opt/${folder}/${dexNumber}.glb`,
+    `https://raw.githubusercontent.com/Sudhanshu-Ambastha/Pokemon-3D/main/models/glb/${folder}/${dexNumber}.glb`,
+  ];
+}
+
 // 1. PASIVAS POR TIPO (SYNERGY SYSTEM)
 export const TYPE_SYNERGIES = {
   Volador: {
