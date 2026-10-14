@@ -48,7 +48,3 @@ window.addEventListener('pagehide', () => {
   menu?.dispose();
   game?.dispose();
 }, { once: true });
-
-import { GddOverlayController } from './menu/gddOverlay.js';
-const gddOverlay = new GddOverlayController();
-gddOverlay.mount(document.body);
