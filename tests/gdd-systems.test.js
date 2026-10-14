@@ -211,3 +211,28 @@ test('Cofres 3D estilo Megabonk entregan objetos Pokémon (Baya Zidra / Pepita) 
   assert.equal(reroll.ok, true);
   assert.equal(session.rerollsRemaining, 1);
 });
+
+test('Santuarios de Carga (Altares Teracristal) y Portal del Jefe funcionan como en Megabonk', () => {
+  const session = new RunSession(
+    {
+      regionId: 'kanto',
+      starter: { id: 'bulbasaur', name: 'Bulbasaur', types: ['Planta', 'Veneno'], color: '#80d79c', accent: '#c5ee88' },
+    },
+    { spawnInitialWave: false }
+  );
+
+  // 1. Probar carga de Altar Teracristal (Charge Shrine)
+  const shrine = session.spawnShrine({ x: 0, z: 0, reward: { id: 'tera_might', name: '+20% Daño', kind: 'damage', value: 0.2 } });
+  const basePower = session.stats.moves.basic.power;
+  const ev = session.update(2.4, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 } });
+  assert.equal(shrine.completed, true, 'El santuario se completa al permanecer en su radio');
+  assert.equal(ev.shrinesCompleted.length, 1);
+  assert.ok(session.stats.moves.basic.power > basePower, 'La bendición del santuario incrementa el daño');
+
+  // 2. Probar activación del Portal del Jefe (Boss Portal)
+  session.player.x = session.bossPortal.x;
+  session.player.z = session.bossPortal.z;
+  session.update(1.6, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 } });
+  assert.equal(session.bossPortal.activated, true, 'Acercarse al Portal del Jefe lo activa');
+  assert.equal(session.bossSpawned, true, 'El Portal del Jefe invoca al Jefe Regional');
+});
