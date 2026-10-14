@@ -838,3 +838,33 @@ kbd { display: inline-grid; min-width: 18px; height: 17px; place-items: center; 
   .run-timer { min-width: 42px; padding: 5px 3px; }
   .run-timer b { font-size: 10px; }
 }
+
+/* Megabonk Full-Width Top XP Bar & PokéSurvivor Sprites */
+.megabonk-top-xp {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background: rgba(8, 14, 22, 0.88);
+  border-bottom: 1px solid rgba(0, 216, 255, 0.35);
+  z-index: 1200;
+  overflow: hidden;
+}
+
+.megabonk-top-xp__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00b4d8, #00e5ff, #7bf2c7);
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.8);
+  transition: width 0.18s ease-out;
+}
+
+.poke-sprite {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+}

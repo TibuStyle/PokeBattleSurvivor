@@ -36,6 +36,7 @@ menu = new MenuController(uiRoot, flow, {
   onSetPause: (paused) => game?.setPaused(paused),
   onResume: () => game?.setPaused(false),
   onChooseRunUpgrade: (upgradeId) => game?.chooseUpgrade(upgradeId),
+  onRerollRunUpgrade: () => game?.rerollChoices(),
   onMouseSensitivityChange: (value) => game?.setMouseSensitivity(value),
   onExtractRun: () => {
     const result = game?.extractCurrentRun();
