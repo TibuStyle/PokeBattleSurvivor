@@ -842,7 +842,7 @@ export class MenuController {
         </div>
         <header class="run-hud__top">
           <div class="run-location">
-            <img class="run-partner-mini" src="${getPokemonSpriteUrl(run.starter.id)}" alt="" />
+            <img id="run-partner-mini" class="run-partner-mini" src="${getPokemonSpriteUrl(hud.currentSpeciesId ?? run.starter.id)}" alt="" />
             <div>
               <small>${escapeHtml(run.regionName)} · <span id="run-wave">OLEADA ${String(hud.wave).padStart(2, '0')}</span></small>
               <b>${escapeHtml(run.mapName)}</b>
@@ -853,6 +853,7 @@ export class MenuController {
             <div class="run-timer"><small>DERROTADOS</small><b id="run-kills">${hud.kills}</b></div>
             <div class="run-timer"><small>POKÉMONEDAS</small><b id="run-coins">🪙 ${hud.coinsInRun ?? 0}</b></div>
             <div class="run-timer"><small>ALTARES</small><b id="run-shrines">⛩️ ${hud.shrinesCompleted ?? 0}/3</b></div>
+            <div class="run-timer"><small>COMBO K.O.</small><b id="run-combo">🔥 ×${hud.comboCount ?? 0}</b></div>
             <div class="run-timer"><small>ORBES XP</small><b id="run-orbs">${hud.orbsCollected}</b></div>
           </div>
           <button class="hud-pause" data-action="pause-run" aria-label="Pausar partida">Ⅱ</button>
@@ -877,7 +878,7 @@ export class MenuController {
         <aside class="run-vitals" aria-label="Estado del compañero">
           <div class="vital-block">
             <div class="vital-row">
-              <span class="vital-label">♥ PS DE ${escapeHtml(run.starter.name.toUpperCase())}</span>
+              <span id="run-vital-label" class="vital-label">♥ PS DE ${escapeHtml((hud.currentSpeciesName ?? run.starter.name).toUpperCase())}${(hud.evolutionStage ?? 1) > 1 ? ` · EVOL. ${hud.evolutionStage}` : ''}</span>
               <b id="run-hp-text">${hud.hp} / ${hud.maxHp} PS</b>
             </div>
             <div class="hud-bar hud-bar--hp ${isLowHp ? 'is-critical' : ''}" id="run-hp-bar">
@@ -937,6 +938,61 @@ export class MenuController {
           </div>
         ` : ''}
       </div>
+    `;
+  }
+
+  renderEquippedAndLootPill(hud, run) {
+    const eq = hud?.equippedItem ?? run?.equippedItem;
+    const loot = hud?.lastChestLoot;
+    const eqHtml = eq && eq.id !== 'none'
+      ? `<span class="hud-item-tag"><b>${escapeHtml(eq.icon ?? '🍎')} ${escapeHtml(eq.name)}</b></span>`
+      : '';
+    const lootHtml = loot
+      ? `<span class="hud-loot-tag">📦 Último cofre: <b>${escapeHtml(loot.icon ?? '🍊')} ${escapeHtml(loot.name)}</b></span>`
+      : '<span class="hud-loot-tag">📦 Busca Cofres 3D y Altares en el radar</span>';
+    return `${eqHtml}${lootHtml}`;
+  }
+
+  renderRadarSvg(hud) {
+    const radar = hud?.radar;
+    const limit = radar?.worldLimit ?? 52;
+    const px = radar?.playerX ?? 0;
+    const pz = radar?.playerZ ?? 0;
+    const toCoord = (val) => Math.max(6, Math.min(94, 50 + (val / limit) * 44));
+
+    const chestsSvg = (radar?.chests ?? []).map((c) => (
+      `<rect x="${(toCoord(c.x) - 2.6).toFixed(1)}" y="${(toCoord(c.z) - 2.6).toFixed(1)}" width="5.2" height="5.2" rx="1" fill="#ffd166" stroke="#142038" stroke-width="1" />`
+    )).join('');
+
+    const shrinesSvg = (radar?.shrines ?? []).map((s) => (
+      `<polygon points="${toCoord(s.x).toFixed(1)},${(toCoord(s.z) - 3.6).toFixed(1)} ${(toCoord(s.x) + 3.6).toFixed(1)},${toCoord(s.z).toFixed(1)} ${toCoord(s.x).toFixed(1)},${(toCoord(s.z) + 3.6).toFixed(1)} ${(toCoord(s.x) - 3.6).toFixed(1)},${toCoord(s.z).toFixed(1)}" fill="${s.completed ? '#4cd137' : '#00e5ff'}" stroke="#0b1324" stroke-width="1" />`
+    )).join('');
+
+    const portalSvg = radar?.bossPortal
+      ? `<circle cx="${toCoord(radar.bossPortal.x).toFixed(1)}" cy="${toCoord(radar.bossPortal.z).toFixed(1)}" r="4.5" fill="none" stroke="#ff4757" stroke-width="2" />`
+      : '';
+
+    const enemiesSvg = (radar?.enemies ?? []).map((e) => {
+      const r = e.isBoss ? 4.2 : (e.isMiniBoss ? 3.4 : (e.isElite ? 2.5 : 1.7));
+      const color = e.isBoss ? '#ff7be5' : (e.isMiniBoss ? '#ffd166' : (e.isElite ? '#ff9f43' : '#ff5c77'));
+      return `<circle cx="${toCoord(e.x).toFixed(1)}" cy="${toCoord(e.z).toFixed(1)}" r="${r}" fill="${color}" />`;
+    }).join('');
+
+    const pCx = toCoord(px).toFixed(1);
+    const pCy = toCoord(pz).toFixed(1);
+
+    return `
+      <svg class="megabonk-radar-svg" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="rgba(11, 20, 38, 0.82)" stroke="#ffcb05" stroke-width="2.2" />
+        <circle cx="50" cy="50" r="28" fill="none" stroke="rgba(163, 198, 255, 0.18)" stroke-dasharray="2 2" />
+        <line x1="50" y1="4" x2="50" y2="96" stroke="rgba(163, 198, 255, 0.14)" />
+        <line x1="4" y1="50" x2="96" y2="50" stroke="rgba(163, 198, 255, 0.14)" />
+        ${portalSvg}
+        ${shrinesSvg}
+        ${chestsSvg}
+        ${enemiesSvg}
+        <circle cx="${pCx}" cy="${pCy}" r="3.6" fill="#00e5ff" stroke="#ffffff" stroke-width="1.5" />
+      </svg>
     `;
   }
 
@@ -1268,6 +1324,23 @@ export class MenuController {
 
     const shrines = this.root.querySelector('#run-shrines');
     if (shrines) shrines.textContent = `⛩️ ${this.hudState.shrinesCompleted ?? 0}/3`;
+
+    const combo = this.root.querySelector('#run-combo');
+    if (combo) combo.textContent = `🔥 ×${this.hudState.comboCount ?? 0}`;
+
+    const partnerMini = this.root.querySelector('#run-partner-mini');
+    if (partnerMini && this.hudState.currentSpeciesId) {
+      const wantSrc = getPokemonSpriteUrl(this.hudState.currentSpeciesId);
+      if (partnerMini.getAttribute('src') !== wantSrc) {
+        partnerMini.setAttribute('src', wantSrc);
+      }
+    }
+
+    const vitalLabel = this.root.querySelector('#run-vital-label');
+    if (vitalLabel && this.hudState.currentSpeciesName) {
+      const evoSuffix = (this.hudState.evolutionStage ?? 1) > 1 ? ` · EVOL. ${this.hudState.evolutionStage}` : '';
+      vitalLabel.textContent = `♥ PS DE ${String(this.hudState.currentSpeciesName).toUpperCase()}${evoSuffix}`;
+    }
 
     const radarBox = this.root.querySelector('#run-radar-box');
     if (radarBox) radarBox.innerHTML = this.renderRadarSvg(this.hudState);
