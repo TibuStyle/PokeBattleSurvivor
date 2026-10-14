@@ -105,6 +105,7 @@ export class GameApp {
     this.playerGlbBones = null;
     this.projectiles3D = [];
     this.lockedTargetEnemy = null;
+    this.moveVfxTextures = new Map();
 
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
@@ -858,30 +859,18 @@ export class GameApp {
   addTargetMarker() {
     this.targetMarker = new THREE.Group();
     const outerRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.32, 0.42, 28),
-      new THREE.MeshBasicMaterial({ color: '#00e5ff', transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.RingGeometry(0.32, 0.44, 28),
+      new THREE.MeshBasicMaterial({ color: '#ffcb05', transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false }),
     );
     const innerDot = new THREE.Mesh(
-      new THREE.CircleGeometry(0.08, 16),
-      new THREE.MeshBasicMaterial({ color: '#ffcb05', transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.CircleGeometry(0.07, 16),
+      new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
     );
     this.targetMarker.add(outerRing);
     this.targetMarker.add(innerDot);
     this.targetMarker.position.set(0, 1.0, -8.5);
     this.scene.add(this.targetMarker);
-
-    // Línea láser sutil de puntería TPS a la altura del pecho
-    const laserGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0.95, 0),
-      new THREE.Vector3(0, 0.95, -8.5),
-    ]);
-    const laserMat = new THREE.LineBasicMaterial({
-      color: '#00e5ff',
-      transparent: true,
-      opacity: 0.38,
-    });
-    this.aimLaserLine = new THREE.Line(laserGeo, laserMat);
-    this.scene.add(this.aimLaserLine);
+    this.aimLaserLine = null;
   }
 
   performDash() {
@@ -1290,26 +1279,331 @@ export class GameApp {
     this.camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
   }
 
-  /** Efectos 3D de los movimientos: domo volumétrico 3D para ataques de área y pulso elemental al lanzar un especial. */
+  /**
+   * Genera y cachea sprites procedurales en Canvas para cada tipo de habilidad estilo PokéSurvivor:
+   * - 'slash': cuchillazo / tajo en media luna afilada (Látigo Cepa, Picotazo, Pulso Umbrío)
+   * - 'flame': lengua/bola de fuego viva (Lanzallamas, Ascuas, Giro Fuego, Rueda Fuego)
+   * - 'leaf': hoja afilada giratoria con nervadura brillante (Hoja Afilada, Absorber, Megaagotar)
+   * - 'water': burbuja/ola de agua espumosa a presión (Pistola Agua, Hidrobomba, Surf, Cascada)
+   * - 'spark': destello eléctrico en estrella (Impactrueno, Trueno)
+   * - 'ice': cristal de hielo puntiagudo (Viento Hielo, Ventisca)
+   * - 'mud': roca/bomba de lodo o veneno (Disparo Lodo, Bomba Lodo)
+   */
+  getMoveSpriteTexture(kind = 'flame', primaryColor = '#ff7a2f', accentColor = '#fff3b0') {
+    const key = `${kind}:${primaryColor}:${accentColor}`;
+    if (this.moveVfxTextures.has(key)) {
+      return this.moveVfxTextures.get(key);
+    }
+    if (typeof document === 'undefined') return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.save();
+    ctx.translate(64, 64);
+
+    if (kind === 'slash') {
+      // Cuchillazo curvo en media luna con filo brillante y estela cortante
+      const grad = ctx.createRadialGradient(8, 0, 10, 0, 0, 58);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.45, accentColor);
+      grad.addColorStop(0.8, primaryColor);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 56, -Math.PI * 0.46, Math.PI * 0.46, false);
+      ctx.quadraticCurveTo(18, 0, 0, -56 * Math.sin(Math.PI * 0.46));
+      ctx.closePath();
+      ctx.fill();
+
+      // Filo interior blanco incandescente del corte
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(4, 0, 48, -Math.PI * 0.4, Math.PI * 0.4, false);
+      ctx.stroke();
+    } else if (kind === 'leaf') {
+      // Cuchilla de hoja verde afilada estilo Hoja Afilada / Látigo Cepa
+      ctx.rotate(-Math.PI / 4);
+      const grad = ctx.createLinearGradient(-46, 0, 46, 0);
+      grad.addColorStop(0, '#1e824c');
+      grad.addColorStop(0.5, primaryColor);
+      grad.addColorStop(1, '#ffffff');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(-48, 0);
+      ctx.quadraticCurveTo(0, -30, 50, 0);
+      ctx.quadraticCurveTo(0, 30, -48, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#f4ffb8';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(-38, 0);
+      ctx.lineTo(42, 0);
+      ctx.stroke();
+    } else if (kind === 'water') {
+      // Ráfaga de agua a presión con cresta de espuma blanca
+      const grad = ctx.createRadialGradient(-8, -8, 4, 0, 0, 52);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.38, '#bae6fd');
+      grad.addColorStop(0.75, primaryColor);
+      grad.addColorStop(1, 'rgba(0, 119, 182, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 48, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, 34, -Math.PI * 0.65, Math.PI * 0.25);
+      ctx.stroke();
+    } else if (kind === 'spark') {
+      // Destello eléctrico de 8 puntas
+      ctx.fillStyle = primaryColor;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let i = 0; i < 16; i += 1) {
+        const r = i % 2 === 0 ? 54 : 16;
+        const a = (i / 16) * Math.PI * 2;
+        if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (kind === 'ice') {
+      // Cristal glacial romboidal afilado
+      const grad = ctx.createLinearGradient(0, -54, 0, 54);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.5, primaryColor);
+      grad.addColorStop(1, '#0284c7');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, -54);
+      ctx.lineTo(24, 0);
+      ctx.lineTo(0, 54);
+      ctx.lineTo(-24, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    } else if (kind === 'mud') {
+      // Roca / Esfera de lodo o bomba ácida con burbujas
+      const grad = ctx.createRadialGradient(-10, -10, 6, 0, 0, 48);
+      grad.addColorStop(0, accentColor);
+      grad.addColorStop(0.65, primaryColor);
+      grad.addColorStop(1, 'rgba(20, 12, 8, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 46, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // 'flame': Bola y lengua de fuego intensa para Lanzallamas y Ascuas
+      const grad = ctx.createRadialGradient(0, 6, 6, 0, 0, 54);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.28, '#fff275');
+      grad.addColorStop(0.62, primaryColor);
+      grad.addColorStop(0.88, '#d62828');
+      grad.addColorStop(1, 'rgba(214, 40, 40, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, -56);
+      ctx.bezierCurveTo(44, -22, 52, 28, 0, 54);
+      ctx.bezierCurveTo(-52, 28, -44, -22, 0, -56);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+    const texture = new THREE.CanvasTexture(canvas);
+    this.moveVfxTextures.set(key, texture);
+    return texture;
+  }
+
+  /**
+   * Crea un tajo / cuchillazo curvo 3D (como Látigo Cepa, Picotazo o Pulso Umbrío)
+   * que barre de lado a lado mientras avanza hacia adelante cortando a los enemigos.
+   */
+  spawnSlashArcEffect(start, end, {
+    primaryColor = '#4cd137',
+    accentColor = '#d8ff96',
+    width = 2.4,
+    withLeaves = false,
+  } = {}) {
+    if (!this.scene) return;
+    const delta = end.clone().sub(start);
+    const length = Math.max(1.2, delta.length());
+    const yaw = Math.atan2(delta.x, delta.z);
+
+    // Grupo portador del cuchillazo curvo horizontal
+    const slashGroup = new THREE.Group();
+    slashGroup.position.copy(start);
+    slashGroup.rotation.y = yaw;
+
+    // Geometría de media luna afilada horizontal + borde brillante
+    const bladeGeo = new THREE.RingGeometry(width * 0.36, width * 0.92, 24, 1, -Math.PI * 0.44, Math.PI * 0.88);
+    const bladeMat = new THREE.MeshBasicMaterial({
+      color: primaryColor,
+      transparent: true,
+      opacity: 0.94,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const bladeMesh = new THREE.Mesh(bladeGeo, bladeMat);
+    bladeMesh.rotation.x = -Math.PI / 2;
+    bladeMesh.rotation.z = -Math.PI / 2;
+    slashGroup.add(bladeMesh);
+
+    const edgeGeo = new THREE.RingGeometry(width * 0.76, width * 0.96, 24, 1, -Math.PI * 0.42, Math.PI * 0.84);
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: accentColor,
+      transparent: true,
+      opacity: 0.98,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const edgeMesh = new THREE.Mesh(edgeGeo, edgeMat);
+    edgeMesh.rotation.x = -Math.PI / 2;
+    edgeMesh.rotation.z = -Math.PI / 2;
+    edgeMesh.position.y = 0.02;
+    slashGroup.add(edgeMesh);
+
+    // Sprite de cuchillazo brillante encima para que se vea nítido desde cualquier ángulo de cámara
+    const slashTex = this.getMoveSpriteTexture('slash', primaryColor, accentColor);
+    if (slashTex) {
+      const spMat = new THREE.SpriteMaterial({
+        map: slashTex,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      });
+      const sp = new THREE.Sprite(spMat);
+      sp.scale.set(width * 1.45, width * 1.1, 1);
+      sp.position.set(0, 0.12, width * 0.35);
+      slashGroup.add(sp);
+    }
+
+    this.scene.add(slashGroup);
+
+    // El corte avanza rápidamente hacia adelante mientras hace un barrido angular de cuchillazo
+    const slashTarget = start.clone().add(delta.clone().normalize().multiplyScalar(Math.min(length, 6.2)));
+    this.projectiles3D.push({
+      kind: 'slash',
+      group: slashGroup,
+      start: start.clone(),
+      end: slashTarget,
+      baseYaw: yaw,
+      sweepSign: (Math.random() > 0.5 ? 1 : -1),
+      progress: 0,
+      speed: 4.8,
+    });
+
+    // Si es un ataque de Planta (Látigo Cepa), desprende hojas verdes giratorias a lo largo del corte
+    if (withLeaves) {
+      const leafTex = this.getMoveSpriteTexture('leaf', primaryColor, accentColor);
+      for (let i = 0; i < 5; i += 1) {
+        const t = (i + 0.5) / 5;
+        const pos = new THREE.Vector3().lerpVectors(start, slashTarget, t);
+        pos.x += (Math.random() - 0.5) * 1.4;
+        pos.z += (Math.random() - 0.5) * 1.4;
+        pos.y += (Math.random() - 0.3) * 0.5;
+        const leafMat = new THREE.SpriteMaterial({
+          map: leafTex,
+          color: '#ffffff',
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+          rotation: Math.random() * Math.PI * 2,
+        });
+        const leafSprite = new THREE.Sprite(leafMat);
+        leafSprite.position.copy(pos);
+        leafSprite.scale.set(0.75, 0.75, 1);
+        this.scene.add(leafSprite);
+        this.effects.push({
+          mesh: leafSprite,
+          ttl: 0.32,
+          remaining: 0.32,
+          floatUp: 1.1,
+          spinSprite: 12,
+        });
+      }
+    }
+  }
+
+  /** Efectos 3D de los movimientos de área (Giro Fuego, Rueda Fuego, Bomba Lodo, Trueno, Vendaval, Ventisca). */
   spawnAttackEffects(attacks) {
     if (!this.scene || !this.player) return;
     for (const attack of attacks) {
       if (attack.area) {
-        this.spawnRingEffect(attack.area.x, attack.area.z, attack.area.color, attack.area.radius, 0.42, 1.2);
-        const domeY = this.getTerrainHeight(attack.area.x, attack.area.z) + 0.25;
-        const dome = new THREE.Mesh(
-          new THREE.SphereGeometry(Math.max(0.8, attack.area.radius * 0.42), 16, 12),
-          new THREE.MeshBasicMaterial({
-            color: attack.area.color || '#ff9f43',
+        const { x, z, radius, color } = attack.area;
+        this.spawnRingEffect(x, z, color, radius, 0.42, 1.2);
+        const baseY = this.getTerrainHeight(x, z) + 0.65;
+
+        const moveId = attack.moveId || '';
+        let spriteKind = 'flame';
+        let accent = '#fff3b0';
+        if (moveId.includes('lodo')) {
+          spriteKind = 'mud';
+          accent = '#f3a6ff';
+        } else if (moveId.includes('trueno')) {
+          spriteKind = 'spark';
+          accent = '#ffffff';
+        } else if (moveId.includes('ventisca')) {
+          spriteKind = 'ice';
+          accent = '#ffffff';
+        } else if (moveId.includes('vendaval')) {
+          spriteKind = 'slash';
+          accent = '#e0fbfc';
+        }
+
+        // Remolino 3D de 12 sprites elementales orbitando y expandiéndose alrededor del Pokémon
+        const tex = this.getMoveSpriteTexture(spriteKind, color || '#ff7a2f', accent);
+        const count = 12;
+        for (let i = 0; i < count; i += 1) {
+          const angle = (i / count) * Math.PI * 2;
+          const startPos = new THREE.Vector3(
+            x + Math.cos(angle) * 0.65,
+            baseY + (i % 3) * 0.22,
+            z + Math.sin(angle) * 0.65,
+          );
+          const endPos = new THREE.Vector3(
+            x + Math.cos(angle + 1.1) * radius,
+            baseY + 0.45 + (i % 2) * 0.35,
+            z + Math.sin(angle + 1.1) * radius,
+          );
+          const spMat = new THREE.SpriteMaterial({
+            map: tex,
             transparent: true,
-            opacity: 0.48,
-            wireframe: true,
+            opacity: 0.95,
             depthWrite: false,
-          }),
-        );
-        dome.position.set(attack.area.x, domeY, attack.area.z);
-        this.scene.add(dome);
-        this.effects.push({ mesh: dome, ttl: 0.36, remaining: 0.36, grow: 2.35, spinY: 6.5 });
+            rotation: angle,
+          });
+          const sp = new THREE.Sprite(spMat);
+          sp.scale.set(1.15, 1.15, 1);
+          sp.position.copy(startPos);
+          this.scene.add(sp);
+          this.projectiles3D.push({
+            kind: 'stream',
+            group: sp,
+            start: startPos,
+            end: endPos,
+            progress: 0,
+            speed: 3.1,
+            startScale: 0.85,
+            endScale: 1.45,
+            spinRate: 9,
+          });
+        }
       }
       if (attack.slot === 'special') {
         this.spawnRingEffect(this.player.position.x, this.player.position.z, attack.color, 0.9, 0.3, 2.4);
@@ -1851,87 +2145,236 @@ export class GameApp {
     return group;
   }
 
+  /**
+   * Renderiza cada habilidad Pokémon con su identidad visual propia estilo PokéSurvivor
+   * (sin láseres genéricos):
+   * - Látigo Cepa (`latigazo`): cuchillazo curvo verde que corta hacia adelante con hojas.
+   * - Lanzallamas (`lanzallamas`) y Ascuas (`ascuas`): ráfaga densa de bolas y lenguas de fuego.
+   * - Hoja Afilada (`hoja-afilada`), Absorber y Megaagotar: ráfaga de hojas giratorias cortantes.
+   * - Pistola Agua, Hidrobomba, Cascada y Surf: chorros de agua espumosa y olas a presión.
+   * - Picotazo, Tornado Aéreo, Pulso Umbrío y Estallido Nocturno: tajos afilados de viento/sombra.
+   * - Impactrueno: rayos eléctricos quebrados en zig-zag con chispas.
+   * - Disparo Lodo: proyectiles de roca/lodo con salpicadura.
+   */
   spawnBeamEffects(beams) {
     if (!this.scene) return;
 
     for (const beamData of beams) {
-      const startY = this.getTerrainHeight(beamData.startX, beamData.startZ) + this.height + 0.92;
-      const endY = this.getTerrainHeight(beamData.endX, beamData.endZ) + 0.88;
+      const startY = this.getTerrainHeight(beamData.startX, beamData.startZ) + this.height + 0.88;
+      const endY = this.getTerrainHeight(beamData.endX, beamData.endZ) + 0.82;
       const start = new THREE.Vector3(beamData.startX, startY, beamData.startZ);
       const end = new THREE.Vector3(beamData.endX, endY, beamData.endZ);
       const delta = end.clone().sub(start);
-      const length = Math.max(0.2, delta.length());
-      const midpoint = start.clone().add(end).multiplyScalar(0.5);
-      const orientation = new THREE.Quaternion().setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0),
-        delta.clone().normalize(),
-      );
+      const length = Math.max(0.4, delta.length());
+      const moveId = String(beamData.moveId || '').toLowerCase();
+      const color = beamData.color ?? '#ff9a4d';
 
-      const coreMaterial = new THREE.MeshBasicMaterial({
-        color: '#ffe6fa',
-        transparent: true,
-        opacity: 0.96,
-        depthWrite: false,
-      });
-      const core = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.09, length, 8, 1, true),
-        coreMaterial,
-      );
-      core.position.copy(midpoint);
-      core.quaternion.copy(orientation);
-      this.scene.add(core);
-      this.effects.push({ mesh: core, ttl: 0.16, remaining: 0.16 });
+      // 1. LÁTIGO CEPA: Cuchillazo / corte curvo verde hacia adelante con hojas desprendiéndose
+      if (moveId === 'latigazo') {
+        this.spawnSlashArcEffect(start, end, {
+          primaryColor: '#38ef7d',
+          accentColor: '#e2ff99',
+          width: 2.35,
+          withLeaves: true,
+        });
+        continue;
+      }
 
-      const auraRadius = Math.max(0.12, beamData.width * 0.24);
-      const auraMaterial = new THREE.MeshBasicMaterial({
-        color: beamData.color ?? '#ff7be5',
-        transparent: true,
-        opacity: 0.58,
-        depthWrite: false,
-      });
-      const aura = new THREE.Mesh(
-        new THREE.CylinderGeometry(auraRadius * 0.65, auraRadius, length, 10, 1, true),
-        auraMaterial,
-      );
-      aura.position.copy(midpoint);
-      aura.quaternion.copy(orientation);
-      this.scene.add(aura);
-      this.effects.push({ mesh: aura, ttl: 0.21, remaining: 0.21 });
+      // 2. PICOTAZO / TORNADO AÉREO / PULSO UMBRÍO / JUEGO SUCIO: Tajo cortante frontal
+      if (moveId === 'picotazo' || moveId === 'tornado-aire' || moveId === 'pulso-umbrio' || moveId === 'juego-sucio') {
+        const isDark = moveId === 'pulso-umbrio' || moveId === 'juego-sucio';
+        this.spawnSlashArcEffect(start, end, {
+          primaryColor: isDark ? '#ff4757' : '#c4b5ff',
+          accentColor: isDark ? '#a55eea' : '#ffffff',
+          width: isDark ? 2.4 : 1.95,
+          withLeaves: false,
+        });
+        continue;
+      }
 
-      // Proyectil 3D viajero (bola de fuego / hoja afilada / esfera de agua / rayo)
-      const projGroup = new THREE.Group();
-      const orbSize = Math.max(0.18, Math.min(0.38, (beamData.width ?? 0.6) * 0.34));
-      const orbMesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(orbSize, 1),
-        new THREE.MeshBasicMaterial({
-          color: beamData.color ?? '#ffcb05',
-          transparent: true,
-          opacity: 0.95,
-          depthWrite: false,
-        }),
-      );
-      const innerCore = new THREE.Mesh(
-        new THREE.OctahedronGeometry(orbSize * 0.62, 0),
-        new THREE.MeshBasicMaterial({
-          color: '#ffffff',
-          transparent: true,
-          opacity: 0.95,
-          depthWrite: false,
-        }),
-      );
-      projGroup.add(orbMesh);
-      projGroup.add(innerCore);
-      projGroup.position.copy(start);
-      this.scene.add(projGroup);
-      this.projectiles3D.push({
-        group: projGroup,
-        orbMesh,
-        innerCore,
-        start: start.clone(),
-        end: end.clone(),
-        progress: 0,
-        speed: Math.max(3.8, 36 / Math.max(1.2, length)),
-      });
+      // 3. LANZALLAMAS / ASCUAS: Ráfaga continua de lenguas y bolas de fuego (nunca un láser)
+      if (moveId === 'lanzallamas' || moveId === 'ascuas') {
+        const isFlamethrower = moveId === 'lanzallamas';
+        const puffsCount = isFlamethrower ? 6 : 4;
+        const flameTex = this.getMoveSpriteTexture('flame', color, '#fff275');
+        for (let p = 0; p < puffsCount; p += 1) {
+          const jitterX = (Math.random() - 0.5) * (isFlamethrower ? 0.85 : 0.35);
+          const jitterZ = (Math.random() - 0.5) * (isFlamethrower ? 0.85 : 0.35);
+          const jitterY = (Math.random() - 0.3) * 0.45;
+          const targetEnd = new THREE.Vector3(end.x + jitterX, end.y + jitterY, end.z + jitterZ);
+          const spMat = new THREE.SpriteMaterial({
+            map: flameTex,
+            transparent: true,
+            opacity: 0.96,
+            depthWrite: false,
+            rotation: (Math.random() - 0.5) * 1.2,
+          });
+          const sp = new THREE.Sprite(spMat);
+          const startScale = isFlamethrower ? 0.55 : 0.62;
+          const endScale = isFlamethrower ? 1.75 : 1.05;
+          sp.scale.set(startScale, startScale, 1);
+          sp.position.copy(start);
+          this.scene.add(sp);
+          this.projectiles3D.push({
+            kind: 'stream',
+            group: sp,
+            start: start.clone(),
+            end: targetEnd,
+            progress: -(p * (isFlamethrower ? 0.14 : 0.12)),
+            speed: isFlamethrower ? 3.8 : 4.6,
+            startScale,
+            endScale,
+            spinRate: (Math.random() - 0.5) * 8,
+          });
+        }
+        continue;
+      }
+
+      // 4. HOJA AFILADA / ABSORBER / MEGAAGOTAR: Cuchillas de hoja verde giratorias
+      if (moveId === 'hoja-afilada' || moveId === 'absorber' || moveId === 'megaagotar') {
+        const leafTex = this.getMoveSpriteTexture('leaf', '#58d68d', '#f4ffb8');
+        const count = moveId === 'hoja-afilada' ? 3 : 4;
+        for (let l = 0; l < count; l += 1) {
+          const spMat = new THREE.SpriteMaterial({
+            map: leafTex,
+            transparent: true,
+            opacity: 0.98,
+            depthWrite: false,
+            rotation: l * 1.1,
+          });
+          const sp = new THREE.Sprite(spMat);
+          sp.scale.set(0.95, 0.95, 1);
+          sp.position.copy(start);
+          this.scene.add(sp);
+          this.projectiles3D.push({
+            kind: 'stream',
+            group: sp,
+            start: start.clone(),
+            end: end.clone(),
+            progress: -(l * 0.14),
+            speed: 4.8,
+            startScale: 0.85,
+            endScale: 1.18,
+            spinRate: 18,
+          });
+        }
+        continue;
+      }
+
+      // 5. PISTOLA AGUA / HIDROBOMBA / SURF / CASCADA: Ráfaga de torrentes y olas de agua espumosa
+      if (moveId === 'pistola-agua' || moveId === 'hidrobomba' || moveId === 'surf' || moveId === 'cascada') {
+        const isHeavyWave = moveId === 'hidrobomba' || moveId === 'surf' || moveId === 'cascada';
+        const waterTex = this.getMoveSpriteTexture('water', color, '#ffffff');
+        const drops = isHeavyWave ? 6 : 4;
+        for (let w = 0; w < drops; w += 1) {
+          const spread = isHeavyWave ? 0.75 : 0.25;
+          const targetEnd = new THREE.Vector3(
+            end.x + (Math.random() - 0.5) * spread,
+            end.y + (Math.random() - 0.4) * 0.3,
+            end.z + (Math.random() - 0.5) * spread,
+          );
+          const spMat = new THREE.SpriteMaterial({
+            map: waterTex,
+            transparent: true,
+            opacity: 0.94,
+            depthWrite: false,
+          });
+          const sp = new THREE.Sprite(spMat);
+          const s0 = isHeavyWave ? 0.75 : 0.55;
+          const s1 = isHeavyWave ? 1.65 : 1.05;
+          sp.scale.set(s0, s0, 1);
+          sp.position.copy(start);
+          this.scene.add(sp);
+          this.projectiles3D.push({
+            kind: 'stream',
+            group: sp,
+            start: start.clone(),
+            end: targetEnd,
+            progress: -(w * 0.12),
+            speed: 4.5,
+            startScale: s0,
+            endScale: s1,
+            spinRate: 6,
+          });
+        }
+        continue;
+      }
+
+      // 6. IMPACTRUENO: Relámpago quebrado en zig-zag 3D + chispas eléctricas
+      if (moveId === 'impactrueno') {
+        const segments = 8;
+        const points = [];
+        for (let s = 0; s <= segments; s += 1) {
+          const t = s / segments;
+          const pt = new THREE.Vector3().lerpVectors(start, end, t);
+          if (s > 0 && s < segments) {
+            pt.x += (Math.random() - 0.5) * 0.85;
+            pt.y += (Math.random() - 0.5) * 0.65;
+            pt.z += (Math.random() - 0.5) * 0.85;
+          }
+          points.push(pt);
+        }
+        const boltGeo = new THREE.BufferGeometry().setFromPoints(points);
+        const boltMat = new THREE.LineBasicMaterial({ color: '#ffee32', transparent: true, opacity: 0.98 });
+        const boltLine = new THREE.Line(boltGeo, boltMat);
+        this.scene.add(boltLine);
+        this.effects.push({ mesh: boltLine, ttl: 0.18, remaining: 0.18 });
+
+        const sparkTex = this.getMoveSpriteTexture('spark', '#ffee32', '#ffffff');
+        const spMat = new THREE.SpriteMaterial({ map: sparkTex, transparent: true, depthWrite: false });
+        const sp = new THREE.Sprite(spMat);
+        sp.scale.set(1.15, 1.15, 1);
+        sp.position.copy(end);
+        this.scene.add(sp);
+        this.effects.push({ mesh: sp, ttl: 0.22, remaining: 0.22, grow: 1.5, spinSprite: 14 });
+        continue;
+      }
+
+      // 7. VIENTO HIELO: Cristales glaciales giratorios en abanico
+      if (moveId === 'viento-hielo') {
+        const iceTex = this.getMoveSpriteTexture('ice', '#96d9d6', '#ffffff');
+        for (let c = 0; c < 4; c += 1) {
+          const spMat = new THREE.SpriteMaterial({ map: iceTex, transparent: true, depthWrite: false, rotation: c * 0.8 });
+          const sp = new THREE.Sprite(spMat);
+          sp.scale.set(0.85, 0.85, 1);
+          sp.position.copy(start);
+          this.scene.add(sp);
+          this.projectiles3D.push({
+            kind: 'stream',
+            group: sp,
+            start: start.clone(),
+            end: end.clone(),
+            progress: -(c * 0.13),
+            speed: 4.4,
+            startScale: 0.75,
+            endScale: 1.25,
+            spinRate: 10,
+          });
+        }
+        continue;
+      }
+
+      // 8. DISPARO LODO / RESTO DE ATAQUES: Proyectiles de roca/energía con estela (sin cilindro láser)
+      const fallbackKind = moveId === 'disparo-lodo' ? 'mud' : 'spark';
+      const projTex = this.getMoveSpriteTexture(fallbackKind, color, '#ffffff');
+      for (let k = 0; k < 3; k += 1) {
+        const spMat = new THREE.SpriteMaterial({ map: projTex, transparent: true, depthWrite: false });
+        const sp = new THREE.Sprite(spMat);
+        sp.scale.set(0.95, 0.95, 1);
+        sp.position.copy(start);
+        this.scene.add(sp);
+        this.projectiles3D.push({
+          kind: 'stream',
+          group: sp,
+          start: start.clone(),
+          end: end.clone(),
+          progress: -(k * 0.14),
+          speed: Math.max(3.8, 34 / Math.max(1.2, length)),
+          startScale: 0.85,
+          endScale: 1.15,
+          spinRate: 10,
+        });
+      }
     }
   }
 
@@ -2117,7 +2560,12 @@ export class GameApp {
       const effect = this.effects[index];
       effect.remaining -= delta;
       const ratio = Math.max(0, effect.remaining / effect.ttl);
-      effect.mesh.material.opacity = ratio;
+      if (effect.mesh.material) {
+        effect.mesh.material.opacity = ratio;
+        if (effect.spinSprite) {
+          effect.mesh.material.rotation += delta * effect.spinSprite;
+        }
+      }
       if (effect.floatUp) {
         effect.mesh.position.y += delta * effect.floatUp;
       }
@@ -2130,8 +2578,8 @@ export class GameApp {
       }
       if (effect.remaining <= 0) {
         this.scene?.remove(effect.mesh);
-        effect.mesh.geometry.dispose();
-        effect.mesh.material.dispose();
+        if (!effect.mesh.isSprite) effect.mesh.geometry?.dispose?.();
+        effect.mesh.material?.dispose?.();
         this.effects.splice(index, 1);
       }
     }
@@ -2139,14 +2587,40 @@ export class GameApp {
     for (let i = this.projectiles3D.length - 1; i >= 0; i -= 1) {
       const proj = this.projectiles3D[i];
       proj.progress += delta * proj.speed;
+      if (proj.progress < 0) {
+        proj.group.visible = false;
+        continue;
+      }
+      proj.group.visible = true;
       if (proj.progress >= 1) {
         this.disposeObjectGroup(proj.group);
         this.projectiles3D.splice(i, 1);
         continue;
       }
-      proj.group.position.lerpVectors(proj.start, proj.end, proj.progress);
-      proj.group.rotation.x += delta * 14;
-      proj.group.rotation.y += delta * 18;
+
+      const t = clamp01(proj.progress);
+      proj.group.position.lerpVectors(proj.start, proj.end, t);
+
+      if (proj.kind === 'slash') {
+        // Barrido en arco de cuchillazo (Látigo Cepa / Picotazo / Pulso Umbrío)
+        const sweep = (t - 0.5) * 1.45 * (proj.sweepSign ?? 1);
+        proj.group.rotation.y = proj.baseYaw + sweep;
+        const scalePulse = 0.75 + Math.sin(t * Math.PI) * 0.55;
+        proj.group.scale.setScalar(scalePulse);
+      } else if (proj.kind === 'stream') {
+        // Ráfaga de fuego (Lanzallamas/Ascuas), hojas (Hoja Afilada) o agua (Pistola Agua/Surf)
+        const s = (proj.startScale ?? 0.6) + ((proj.endScale ?? 1.4) - (proj.startScale ?? 0.6)) * t;
+        proj.group.scale.set(s, s, 1);
+        if (proj.group.material) {
+          proj.group.material.opacity = t < 0.75 ? 0.96 : Math.max(0, (1 - t) * 4);
+          if (proj.spinRate) {
+            proj.group.material.rotation += delta * proj.spinRate;
+          }
+        }
+      } else {
+        proj.group.rotation.x += delta * 14;
+        proj.group.rotation.y += delta * 18;
+      }
     }
   }
 
@@ -2229,9 +2703,9 @@ export class GameApp {
   disposeObjectGroup(group) {
     if (!group) return;
     group.traverse((object) => {
-      object.geometry?.dispose();
-      if (Array.isArray(object.material)) object.material.forEach((m) => m.dispose());
-      else object.material?.dispose();
+      if (!object.isSprite) object.geometry?.dispose?.();
+      if (Array.isArray(object.material)) object.material.forEach((m) => m.dispose?.());
+      else object.material?.dispose?.();
     });
     this.scene?.remove(group);
   }
