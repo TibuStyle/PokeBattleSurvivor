@@ -28,11 +28,48 @@ export const POKEMON_DEX_IDS = {
   ceruledge: 937, tinkaton: 959,
 };
 
+export const ENEMY_SPECIES_DEX_IDS = {
+  Caterpie: 10,
+  Weedle: 13,
+  Spinarak: 167,
+  Hoothoot: 163,
+  Poochyena: 261,
+  Numel: 322,
+  'Onix centinela': 95,
+  'Ursaring centinela': 217,
+  'Aggron centinela': 306,
+  Mewtwo: 150,
+  'Ho-Oh / Lugia': 250,
+  Groudon: 383,
+};
+
+/**
+ * Devuelve el Sprite 3D oficial estilo Pokémon GO / Pokémon HOME (512x512 renderizado en 3D con iluminación).
+ */
 export function getPokemonSpriteUrl(pokemonId, { shiny = false } = {}) {
-  const dexNumber = POKEMON_DEX_IDS[pokemonId] ?? 25;
+  const key = String(pokemonId || '').toLowerCase();
+  const dexNumber = POKEMON_DEX_IDS[key] ?? ENEMY_SPECIES_DEX_IDS[pokemonId] ?? 25;
   return shiny
-    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${dexNumber}.png`
-    : `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dexNumber}.png`;
+    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/shiny/${dexNumber}.png`
+    : `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${dexNumber}.png`;
+}
+
+/**
+ * Devuelve el Sprite 3D de cualquier enemigo o jefe por nombre de especie para renderizarlo en Three.js.
+ */
+export function getEnemy3dSpriteUrl(speciesName) {
+  const dexNumber = ENEMY_SPECIES_DEX_IDS[speciesName] ?? POKEMON_DEX_IDS[String(speciesName || '').toLowerCase()] ?? 10;
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/home/${dexNumber}.png`;
+}
+
+/**
+ * Devuelve la URL del modelo 3D .glb optimizado en Pokemon-3D-api si se desea carga GLTF directa.
+ */
+export function getPokemonGlbUrl(pokemonId, { shiny = false } = {}) {
+  const key = String(pokemonId || '').toLowerCase();
+  const dexNumber = POKEMON_DEX_IDS[key] ?? ENEMY_SPECIES_DEX_IDS[pokemonId] ?? 1;
+  const folder = shiny ? 'shiny' : 'regular';
+  return `https://raw.githubusercontent.com/Pokemon-3D-api/assets/main/models/opt/${folder}/${dexNumber}.glb`;
 }
 
 // 1. PASIVAS POR TIPO (SYNERGY SYSTEM)
