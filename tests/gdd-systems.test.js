@@ -236,3 +236,51 @@ test('Santuarios de Carga (Altares Teracristal) y Portal del Jefe funcionan como
   assert.equal(session.bossPortal.activated, true, 'Acercarse al Portal del Jefe lo activa');
   assert.equal(session.bossSpawned, true, 'El Portal del Jefe invoca al Jefe Regional');
 });
+
+
+test("Evolución en partida transforma al inicial en Nivel 4 y Nivel 8 y activa Guardianes Orbitantes", () => {
+  const session = new RunSession(
+    {
+      regionId: "hoenn",
+      boss: "Groudon",
+      enemies: ["Poochyena"],
+      starter: { id: "torchic", name: "Torchic", types: ["Fuego"], color: "#ff7a45", accent: "#ffd166" },
+      equippedItemId: "casco_dentado",
+      upgrades: {},
+    },
+    { spawnInitialWave: false, random: () => 0.25 }
+  );
+
+  assert.equal(session.currentSpeciesId, "torchic");
+  assert.equal(session.evolutionStage, 1);
+  assert.equal(session.getOrbitalCount(), 0);
+
+  // Subir hasta Nivel 4 -> Combusken (Etapa 2)
+  while (session.level < 4) {
+    session.gainXp(session.xpToNext);
+    if (session.status === "level-up") {
+      session.chooseUpgrade(0);
+    }
+  }
+  assert.equal(session.evolutionStage, 2);
+  assert.equal(session.currentSpeciesId, "combusken");
+  assert.equal(session.currentSpeciesName, "Combusken");
+  assert.ok(session.getOrbitalCount() >= 2, "Al evolucionar a Etapa 2 activa Guardianes Elementales Orbitantes");
+
+  // Subir hasta Nivel 8 -> Blaziken (Etapa 3)
+  while (session.level < 8) {
+    session.gainXp(session.xpToNext);
+    if (session.status === "level-up") {
+      session.chooseUpgrade(0);
+    }
+  }
+  assert.equal(session.evolutionStage, 3);
+  assert.equal(session.currentSpeciesId, "blaziken");
+  assert.equal(session.currentSpeciesName, "Blaziken");
+  assert.ok(session.getOrbitalCount() >= 3);
+
+  // Verificar espinas de Casco Dentado al recibir daño por contacto
+  const attacker = session.spawnEnemy({ species: "Poochyena", x: 0.2, z: 0, hp: 100 });
+  session.damagePlayer(12, attacker);
+  assert.equal(attacker.hp, 72, "Casco Dentado devuelve 28 de daño de espinas al atacante");
+});
