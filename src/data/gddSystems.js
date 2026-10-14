@@ -5,16 +5,36 @@
  */
 
 export const POKEMON_DEX_IDS = {
-  // Iniciales Regionales
-  bulbasaur: 1, charmander: 4, squirtle: 7,
-  chikorita: 152, cyndaquil: 155, totodile: 158,
-  treecko: 252, torchic: 255, mudkip: 258,
-  turtwig: 387, chimchar: 390, piplup: 393,
-  snivy: 495, tepig: 498, oshawott: 501,
-  chespin: 650, fennekin: 653, froakie: 656,
-  rowlet: 722, litten: 725, popplio: 728,
-  grookey: 810, scorbunny: 813, sobble: 816,
-  sprigatito: 906, fuecoco: 909, quaxly: 912,
+  // Iniciales Regionales y sus Evoluciones (Etapa 2 y Etapa 3)
+  bulbasaur: 1, ivysaur: 2, venusaur: 3,
+  charmander: 4, charmeleon: 5, charizard: 6,
+  squirtle: 7, wartortle: 8, blastoise: 9,
+  chikorita: 152, bayleef: 153, meganium: 154,
+  cyndaquil: 155, quilava: 156, typhlosion: 157,
+  totodile: 158, croconaw: 159, feraligatr: 160,
+  treecko: 252, grovyle: 253, sceptile: 254,
+  torchic: 255, combusken: 256, blaziken: 257,
+  mudkip: 258, marshtomp: 259, swampert: 260,
+  turtwig: 387, grotle: 388, torterra: 389,
+  chimchar: 390, monferno: 391, infernape: 392,
+  piplup: 393, prinplup: 394, empoleon: 395,
+  snivy: 495, servine: 496, serperior: 497,
+  tepig: 498, pignite: 499, emboar: 500,
+  oshawott: 501, dewott: 502, samurott: 503,
+  chespin: 650, quilladin: 651, chesnaught: 652,
+  fennekin: 653, braixen: 654, delphox: 655,
+  froakie: 656, frogadier: 657,
+  rowlet: 722, dartrix: 723, decidueye: 724,
+  litten: 725, torracat: 726, incineroar: 727,
+  popplio: 728, brionne: 729, primarina: 730,
+  grookey: 810, thwackey: 811, rillaboom: 812,
+  scorbunny: 813, raboot: 814, cinderace: 815,
+  sobble: 816, drizzile: 817, inteleon: 818,
+  sprigatito: 906, floragato: 907, meowscarada: 908,
+  fuecoco: 909, crocalor: 910, skeledirge: 911,
+  quaxly: 912, quaxwell: 913, quaquaval: 914,
+  pidgeotto: 17, pidgeot: 18, golduck: 55, slowbro: 80,
+  umbreon: 197, sylveon: 700, mightyena: 262, sealeo: 364, walrein: 365,
   // Pool Gachapón y Favoritos PokéSurvivor
   pidgey: 16, fearow: 22, pikachu: 25, raichu: 26,
   psyduck: 54, slowpoke: 79, gengar: 94, eevee: 133,
@@ -478,4 +498,154 @@ export function rollShinyGacha(unlockedPokemonIds = [], randomFn = Math.random) 
     ...finalPool[index],
     isShiny: true,
   };
+}
+
+
+// 5. SISTEMA DE EVOLUCIÓN EN PARTIDA (NIVEL 4 -> ETAPA 2, NIVEL 8 -> ETAPA FINAL 3)
+export const EVOLUTION_CHAINS = {
+  bulbasaur: [
+    { level: 4, id: 'ivysaur', name: 'Ivysaur', stage: 2 },
+    { level: 8, id: 'venusaur', name: 'Venusaur', stage: 3 },
+  ],
+  charmander: [
+    { level: 4, id: 'charmeleon', name: 'Charmeleon', stage: 2 },
+    { level: 8, id: 'charizard', name: 'Charizard', stage: 3 },
+  ],
+  squirtle: [
+    { level: 4, id: 'wartortle', name: 'Wartortle', stage: 2 },
+    { level: 8, id: 'blastoise', name: 'Blastoise', stage: 3 },
+  ],
+  chikorita: [
+    { level: 4, id: 'bayleef', name: 'Bayleef', stage: 2 },
+    { level: 8, id: 'meganium', name: 'Meganium', stage: 3 },
+  ],
+  cyndaquil: [
+    { level: 4, id: 'quilava', name: 'Quilava', stage: 2 },
+    { level: 8, id: 'typhlosion', name: 'Typhlosion', stage: 3 },
+  ],
+  totodile: [
+    { level: 4, id: 'croconaw', name: 'Croconaw', stage: 2 },
+    { level: 8, id: 'feraligatr', name: 'Feraligatr', stage: 3 },
+  ],
+  treecko: [
+    { level: 4, id: 'grovyle', name: 'Grovyle', stage: 2 },
+    { level: 8, id: 'sceptile', name: 'Sceptile', stage: 3 },
+  ],
+  torchic: [
+    { level: 4, id: 'combusken', name: 'Combusken', stage: 2 },
+    { level: 8, id: 'blaziken', name: 'Blaziken', stage: 3 },
+  ],
+  mudkip: [
+    { level: 4, id: 'marshtomp', name: 'Marshtomp', stage: 2 },
+    { level: 8, id: 'swampert', name: 'Swampert', stage: 3 },
+  ],
+  turtwig: [
+    { level: 4, id: 'grotle', name: 'Grotle', stage: 2 },
+    { level: 8, id: 'torterra', name: 'Torterra', stage: 3 },
+  ],
+  chimchar: [
+    { level: 4, id: 'monferno', name: 'Monferno', stage: 2 },
+    { level: 8, id: 'infernape', name: 'Infernape', stage: 3 },
+  ],
+  piplup: [
+    { level: 4, id: 'prinplup', name: 'Prinplup', stage: 2 },
+    { level: 8, id: 'empoleon', name: 'Empoleon', stage: 3 },
+  ],
+  snivy: [
+    { level: 4, id: 'servine', name: 'Servine', stage: 2 },
+    { level: 8, id: 'serperior', name: 'Serperior', stage: 3 },
+  ],
+  tepig: [
+    { level: 4, id: 'pignite', name: 'Pignite', stage: 2 },
+    { level: 8, id: 'emboar', name: 'Emboar', stage: 3 },
+  ],
+  oshawott: [
+    { level: 4, id: 'dewott', name: 'Dewott', stage: 2 },
+    { level: 8, id: 'samurott', name: 'Samurott', stage: 3 },
+  ],
+  chespin: [
+    { level: 4, id: 'quilladin', name: 'Quilladin', stage: 2 },
+    { level: 8, id: 'chesnaught', name: 'Chesnaught', stage: 3 },
+  ],
+  fennekin: [
+    { level: 4, id: 'braixen', name: 'Braixen', stage: 2 },
+    { level: 8, id: 'delphox', name: 'Delphox', stage: 3 },
+  ],
+  froakie: [
+    { level: 4, id: 'frogadier', name: 'Frogadier', stage: 2 },
+    { level: 8, id: 'greninja', name: 'Greninja', stage: 3 },
+  ],
+  rowlet: [
+    { level: 4, id: 'dartrix', name: 'Dartrix', stage: 2 },
+    { level: 8, id: 'decidueye', name: 'Decidueye', stage: 3 },
+  ],
+  litten: [
+    { level: 4, id: 'torracat', name: 'Torracat', stage: 2 },
+    { level: 8, id: 'incineroar', name: 'Incineroar', stage: 3 },
+  ],
+  popplio: [
+    { level: 4, id: 'brionne', name: 'Brionne', stage: 2 },
+    { level: 8, id: 'primarina', name: 'Primarina', stage: 3 },
+  ],
+  grookey: [
+    { level: 4, id: 'thwackey', name: 'Thwackey', stage: 2 },
+    { level: 8, id: 'rillaboom', name: 'Rillaboom', stage: 3 },
+  ],
+  scorbunny: [
+    { level: 4, id: 'raboot', name: 'Raboot', stage: 2 },
+    { level: 8, id: 'cinderace', name: 'Cinderace', stage: 3 },
+  ],
+  sobble: [
+    { level: 4, id: 'drizzile', name: 'Drizzile', stage: 2 },
+    { level: 8, id: 'inteleon', name: 'Inteleon', stage: 3 },
+  ],
+  sprigatito: [
+    { level: 4, id: 'floragato', name: 'Floragato', stage: 2 },
+    { level: 8, id: 'meowscarada', name: 'Meowscarada', stage: 3 },
+  ],
+  fuecoco: [
+    { level: 4, id: 'crocalor', name: 'Crocalor', stage: 2 },
+    { level: 8, id: 'skeledirge', name: 'Skeledirge', stage: 3 },
+  ],
+  quaxly: [
+    { level: 4, id: 'quaxwell', name: 'Quaxwell', stage: 2 },
+    { level: 8, id: 'quaquaval', name: 'Quaquaval', stage: 3 },
+  ],
+  pidgey: [
+    { level: 4, id: 'pidgeotto', name: 'Pidgeotto', stage: 2 },
+    { level: 8, id: 'pidgeot', name: 'Pidgeot', stage: 3 },
+  ],
+  pikachu: [
+    { level: 5, id: 'raichu', name: 'Raichu', stage: 2 },
+  ],
+  psyduck: [
+    { level: 5, id: 'golduck', name: 'Golduck', stage: 2 },
+  ],
+  slowpoke: [
+    { level: 5, id: 'slowbro', name: 'Slowbro', stage: 2 },
+  ],
+  eevee: [
+    { level: 4, id: 'umbreon', name: 'Umbreon', stage: 2 },
+    { level: 8, id: 'sylveon', name: 'Sylveon', stage: 3 },
+  ],
+  poochyena: [
+    { level: 5, id: 'mightyena', name: 'Mightyena', stage: 2 },
+  ],
+  spheal: [
+    { level: 4, id: 'sealeo', name: 'Sealeo', stage: 2 },
+    { level: 8, id: 'walrein', name: 'Walrein', stage: 3 },
+  ],
+};
+
+export function resolveEvolutionForLevel(baseStarterId, currentLevel) {
+  const key = String(baseStarterId || '').toLowerCase();
+  const chain = EVOLUTION_CHAINS[key];
+  if (!Array.isArray(chain) || chain.length === 0) return null;
+  let active = null;
+  for (const step of chain) {
+    if (currentLevel >= step.level) {
+      active = step;
+    }
+  }
+  return active;
 }
