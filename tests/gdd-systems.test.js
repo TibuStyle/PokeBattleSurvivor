@@ -16,6 +16,7 @@ import {
   LEVEL_UP_SKILLS,
   selectRarityByRoll,
   rollNormalGacha,
+  rollTenNormalGacha,
   rollShinyGacha,
   calculateDarkTypeCritChance,
   getEquippedItemModifiers,
@@ -178,4 +179,35 @@ test('Jefe Regional genera patrones Bullet Hell 3D en el suelo esquivables salta
   const hpBefore = session.player.hp;
   session.update(1.4, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 }, height: 1.5 });
   assert.equal(session.player.hp, hpBefore, 'Saltar o planear en 3D esquiva la onda del jefe en el suelo');
+});
+
+test('Tirada Gacha ×10 estilo PokéSurvivor garantiza al menos un Súper Raro o Legendario', () => {
+  // Forzar tiradas comunes (0.85 -> common) y verificar que el pity garantice al menos 1 épico/legendario
+  const pulls = rollTenNormalGacha(() => 0.85);
+  assert.equal(pulls.length, 10);
+  assert.ok(pulls.some((p) => p.rarity === 'super_rare' || p.rarity === 'legendary'));
+});
+
+test('Cofres 3D estilo Megabonk entregan objetos Pokémon (Baya Zidra / Pepita) y Reroll cambia cartas', () => {
+  const session = new RunSession(
+    {
+      regionId: 'kanto',
+      starter: { id: 'charmander', name: 'Charmander', types: ['Fuego'], color: '#f38b52', accent: '#ffd166' },
+    },
+    { spawnInitialWave: false }
+  );
+  session.player.hp = 40;
+  const chest = session.spawnChest({ x: 0, z: 0 });
+  chest.loot = { id: 'baya_zidra', name: 'Baya Zidra', icon: '🍊', kind: 'heal', healRatio: 0.45, coins: 12 };
+
+  const events = session.update(0.1, { movement: { x: 0, z: 0 }, aimDirection: { x: 0, z: -1 } });
+  assert.equal(events.chestsOpened.length, 1, 'El cofre 3D se abre al pasar sobre él');
+  assert.ok(session.player.hp > 40, 'La Baya Zidra del cofre cura PS inmediatamente');
+
+  // Probar Reroll de cartas al subir de nivel
+  session.gainXp(session.xpToNext);
+  assert.equal(session.status, 'level-up');
+  const reroll = session.rerollUpgradeChoices();
+  assert.equal(reroll.ok, true);
+  assert.equal(session.rerollsRemaining, 1);
 });
