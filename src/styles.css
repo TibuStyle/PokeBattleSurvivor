@@ -282,7 +282,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
   width: 136px;
   height: 136px;
   object-fit: contain;
-  image-rendering: pixelated;
+  
   filter: drop-shadow(0 10px 10px rgba(0, 0, 0, 0.45));
   animation: pokeBounce 2.2s ease-in-out infinite;
 }
@@ -326,7 +326,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
 .pmd-dialogue-portrait img {
   width: 60px;
   height: 60px;
-  image-rendering: pixelated;
+  
 }
 
 .pmd-dialogue-head {
@@ -480,13 +480,13 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
 .region-enemy-sprite {
   width: 54px;
   height: 54px;
-  image-rendering: pixelated;
+  
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
 }
 .region-boss-sprite {
   width: 86px;
   height: 86px;
-  image-rendering: pixelated;
+  
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
 }
 
@@ -645,7 +645,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
   width: 78px;
   height: 78px;
   object-fit: contain;
-  image-rendering: pixelated;
+  
   filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.5));
 }
 
@@ -747,7 +747,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
   border: 2px solid var(--rarity-border, #4aa3ff);
   min-width: 96px;
 }
-.gacha-pull-card img { width: 56px; height: 56px; image-rendering: pixelated; }
+.gacha-pull-card img { width: 56px; height: 56px;  }
 .gacha-pull-card strong { font-size: 12px; color: #fff; }
 .gacha-pull-card small { font-size: 10px; color: var(--poke-yellow); }
 
@@ -854,7 +854,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--poke-yellow); o
   border-radius: 14px;
   background: rgba(18, 30, 56, 0.86);
 }
-.run-partner-mini { width: 40px; height: 40px; image-rendering: pixelated; }
+.run-partner-mini { width: 40px; height: 40px;  }
 .run-metrics { display: flex; align-items: center; gap: 8px; }
 .run-timer {
   display: grid;
@@ -1007,4 +1007,42 @@ kbd { padding: 2px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.16
   .pokesurvivor-hub-hero, .region-grid, .dex-grid, .upgrade-grid, .gacha-layout, .starter-grid, .ready-layout, .levelup-grid, .guide-layout {
     grid-template-columns: 1fr;
   }
+}
+
+/* Retícula de Shooter en 3ª Persona (TPS Crosshair) */
+.tps-crosshair {
+  position: fixed;
+  top: 44%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(0, 229, 255, 0.78);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.45);
+  pointer-events: none;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+}
+.tps-crosshair::before,
+.tps-crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 203, 5, 0.85);
+}
+.tps-crosshair::before {
+  width: 12px;
+  height: 2px;
+}
+.tps-crosshair::after {
+  width: 2px;
+  height: 12px;
+}
+.tps-crosshair span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #ffcb05;
+  box-shadow: 0 0 6px #ffcb05;
 }
