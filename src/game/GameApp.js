@@ -103,6 +103,8 @@ export class GameApp {
     this.playerVisualYaw = Math.PI;
     this.playerAttackAnimTimer = 0;
     this.playerGlbBones = null;
+    this.projectiles3D = [];
+    this.lockedTargetEnemy = null;
 
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
@@ -955,6 +957,63 @@ export class GameApp {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * Asistencia de puntería inteligente en 3ª persona (estilo Megabonk):
+   * - Si hay un enemigo dentro del cono frontal de la mira (o cerca si el ratón aún no está capturado),
+   *   fija suavemente el objetivo 3D para que los proyectiles nunca se pierdan en el suelo.
+   */
+  resolveSmartAimDirection() {
+    const rawAim = this.controls?.getAimDirection() ?? { x: 0, z: -1 };
+    const enemies = this.session?.enemies ?? [];
+    if (enemies.length === 0) {
+      this.lockedTargetEnemy = null;
+      return rawAim;
+    }
+
+    const px = this.session.player.x;
+    const pz = this.session.player.z;
+    const maxRange = Math.max(11.5, (this.session.stats?.moves?.basic?.range ?? 9.5) + 2.5);
+    const pointerLocked = Boolean(this.controls?.pointerLocked);
+
+    let bestInCone = null;
+    let bestConeScore = -Infinity;
+    let closestAny = null;
+    let closestDist = Infinity;
+
+    for (const enemy of enemies) {
+      if (enemy.hp <= 0) continue;
+      const dx = enemy.x - px;
+      const dz = enemy.z - pz;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.001 || dist > maxRange) continue;
+
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestAny = { enemy, dx: dx / dist, dz: dz / dist, dist };
+      }
+
+      const nx = dx / dist;
+      const nz = dz / dist;
+      const dot = nx * rawAim.x + nz * rawAim.z;
+      if (dot >= 0.80) {
+        const score = dot * 12 - dist * 0.35 + (enemy.isBoss ? 2.5 : (enemy.isMiniBoss ? 1.5 : 0));
+        if (score > bestConeScore) {
+          bestConeScore = score;
+          bestInCone = { enemy, dx: nx, dz: nz, dist };
+        }
+      }
+    }
+
+    const chosen = bestInCone ?? (!pointerLocked && closestDist <= 10.5 ? closestAny : null);
+    if (chosen) {
+      this.lockedTargetEnemy = chosen.enemy;
+      return { x: chosen.dx, z: chosen.dz };
+    }
+
+    this.lockedTargetEnemy = null;
+    return rawAim;
+  }
+
   update(delta) {
     if (!this.controls || !this.player || !this.session) return;
     this.elapsed += delta;
@@ -1002,7 +1061,7 @@ export class GameApp {
     this.cameraPitch = this.controls.cameraPitch;
     // WASD usa siempre el yaw de la cámara capturado con Pointer Lock.
     const movement = this.controls.getMovementVector(this.cameraYaw);
-    const aimDirection = this.controls.getAimDirection();
+    const aimDirection = this.resolveSmartAimDirection();
     const specialPressed = this.controls.consumeSpecialRequest();
 
     // Consumir el dash solicitado desde el teclado (Shift)
@@ -1039,11 +1098,17 @@ export class GameApp {
     if (events.chestsOpened?.length > 0) {
       for (const opened of events.chestsOpened) {
         this.spawnRingEffect(opened.x, opened.z, '#ffd166', 1.4, 0.45, 2.8);
+        const ty = this.getTerrainHeight(opened.x, opened.z);
+        const lootLabel = opened.loot ? `${opened.loot.icon} ${opened.loot.name}` : '📦 ¡Cofre!';
+        this.spawnFloatingText3D(opened.x, ty + 2.1, opened.z, lootLabel, '#ffd166', 1.65);
       }
     }
     if (events.shrinesCompleted?.length > 0) {
       for (const done of events.shrinesCompleted) {
         this.spawnRingEffect(done.x, done.z, '#4cd137', 2.6, 0.55, 3.2);
+        const ty = this.getTerrainHeight(done.x, done.z);
+        const shrineLabel = done.reward?.label ? `⛩️ ${done.reward.label}` : '⛩️ ¡Altar Completado!';
+        this.spawnFloatingText3D(done.x, ty + 2.4, done.z, shrineLabel, '#7bf2c7', 1.75);
       }
     }
 
@@ -1146,12 +1211,20 @@ export class GameApp {
       }
     }
 
-    const aimDist = 8.5;
-    const aimX = this.session.player.x + aimDirection.x * aimDist;
-    const aimZ = this.session.player.z + aimDirection.z * aimDist;
-    const aimY = this.getTerrainHeight(aimX, aimZ) + this.height + 0.95;
+    const lockedEnemy = this.lockedTargetEnemy;
+    const aimDist = lockedEnemy
+      ? Math.hypot(lockedEnemy.x - this.session.player.x, lockedEnemy.z - this.session.player.z)
+      : 8.5;
+    const aimX = lockedEnemy ? lockedEnemy.x : this.session.player.x + aimDirection.x * aimDist;
+    const aimZ = lockedEnemy ? lockedEnemy.z : this.session.player.z + aimDirection.z * aimDist;
+    const aimY = this.getTerrainHeight(aimX, aimZ) + (lockedEnemy ? 0.92 : this.height + 0.95);
 
     this.targetMarker.position.set(aimX, aimY, aimZ);
+    const markerPulse = lockedEnemy ? 1.18 + Math.sin(this.elapsed * 16) * 0.14 : 1.0;
+    this.targetMarker.scale.setScalar(markerPulse);
+    if (this.targetMarker.children[0]?.material) {
+      this.targetMarker.children[0].material.color.set(lockedEnemy ? '#ffcb05' : '#00e5ff');
+    }
     if (this.camera) {
       this.targetMarker.lookAt(this.camera.position);
     }
@@ -1163,6 +1236,8 @@ export class GameApp {
       positions.setXYZ(0, this.player.position.x, startY, this.player.position.z);
       positions.setXYZ(1, aimX, aimY, aimZ);
       positions.needsUpdate = true;
+      this.aimLaserLine.material.color.set(lockedEnemy ? '#ffcb05' : '#00e5ff');
+      this.aimLaserLine.material.opacity = lockedEnemy ? 0.62 : 0.34;
     }
 
     this.playerShadow.position.set(this.player.position.x, groundY + 0.02, this.player.position.z);
@@ -1215,12 +1290,26 @@ export class GameApp {
     this.camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
   }
 
-  /** Efectos de los movimientos: anillo de área (Bomba Lodo, Giro Fuego...) y pulso al lanzar un especial. */
+  /** Efectos 3D de los movimientos: domo volumétrico 3D para ataques de área y pulso elemental al lanzar un especial. */
   spawnAttackEffects(attacks) {
     if (!this.scene || !this.player) return;
     for (const attack of attacks) {
       if (attack.area) {
         this.spawnRingEffect(attack.area.x, attack.area.z, attack.area.color, attack.area.radius, 0.42, 1.2);
+        const domeY = this.getTerrainHeight(attack.area.x, attack.area.z) + 0.25;
+        const dome = new THREE.Mesh(
+          new THREE.SphereGeometry(Math.max(0.8, attack.area.radius * 0.42), 16, 12),
+          new THREE.MeshBasicMaterial({
+            color: attack.area.color || '#ff9f43',
+            transparent: true,
+            opacity: 0.48,
+            wireframe: true,
+            depthWrite: false,
+          }),
+        );
+        dome.position.set(attack.area.x, domeY, attack.area.z);
+        this.scene.add(dome);
+        this.effects.push({ mesh: dome, ttl: 0.36, remaining: 0.36, grow: 2.35, spinY: 6.5 });
       }
       if (attack.slot === 'special') {
         this.spawnRingEffect(this.player.position.x, this.player.position.z, attack.color, 0.9, 0.3, 2.4);
@@ -1808,6 +1897,41 @@ export class GameApp {
       aura.quaternion.copy(orientation);
       this.scene.add(aura);
       this.effects.push({ mesh: aura, ttl: 0.21, remaining: 0.21 });
+
+      // Proyectil 3D viajero (bola de fuego / hoja afilada / esfera de agua / rayo)
+      const projGroup = new THREE.Group();
+      const orbSize = Math.max(0.18, Math.min(0.38, (beamData.width ?? 0.6) * 0.34));
+      const orbMesh = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(orbSize, 1),
+        new THREE.MeshBasicMaterial({
+          color: beamData.color ?? '#ffcb05',
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+        }),
+      );
+      const innerCore = new THREE.Mesh(
+        new THREE.OctahedronGeometry(orbSize * 0.62, 0),
+        new THREE.MeshBasicMaterial({
+          color: '#ffffff',
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+        }),
+      );
+      projGroup.add(orbMesh);
+      projGroup.add(innerCore);
+      projGroup.position.copy(start);
+      this.scene.add(projGroup);
+      this.projectiles3D.push({
+        group: projGroup,
+        orbMesh,
+        innerCore,
+        start: start.clone(),
+        end: end.clone(),
+        progress: 0,
+        speed: Math.max(3.8, 36 / Math.max(1.2, length)),
+      });
     }
   }
 
@@ -1997,6 +2121,9 @@ export class GameApp {
       if (effect.floatUp) {
         effect.mesh.position.y += delta * effect.floatUp;
       }
+      if (effect.spinY) {
+        effect.mesh.rotation.y += delta * effect.spinY;
+      }
       if (effect.grow) {
         const scale = 1 + (1 - ratio) * effect.grow;
         effect.mesh.scale.setScalar(scale);
@@ -2007,6 +2134,19 @@ export class GameApp {
         effect.mesh.material.dispose();
         this.effects.splice(index, 1);
       }
+    }
+
+    for (let i = this.projectiles3D.length - 1; i >= 0; i -= 1) {
+      const proj = this.projectiles3D[i];
+      proj.progress += delta * proj.speed;
+      if (proj.progress >= 1) {
+        this.disposeObjectGroup(proj.group);
+        this.projectiles3D.splice(i, 1);
+        continue;
+      }
+      proj.group.position.lerpVectors(proj.start, proj.end, proj.progress);
+      proj.group.rotation.x += delta * 14;
+      proj.group.rotation.y += delta * 18;
     }
   }
 
@@ -2035,6 +2175,11 @@ export class GameApp {
       snapshot.lastAttackSeq ?? 0,
       snapshot.miniBoss?.hp ?? 0,
       snapshot.boss?.hp ?? 0,
+      snapshot.radar?.playerX ?? 0,
+      snapshot.radar?.playerZ ?? 0,
+      snapshot.coinsInRun ?? 0,
+      snapshot.shrinesCompleted ?? 0,
+      snapshot.lastChestLoot?.id ?? '',
       snapshot.activeUpgrades.map((u) => `${u.id}:${u.rank}`).join(','),
     ].join('|');
 
@@ -2103,6 +2248,8 @@ export class GameApp {
     this.chestVisuals.clear();
     this.shrineVisuals.clear();
     this.activeMixers = [];
+    this.projectiles3D = [];
+    this.lockedTargetEnemy = null;
     this.bossPortalMesh = null;
     if (this.bossMarker) {
       this.disposeObjectGroup(this.bossMarker);
