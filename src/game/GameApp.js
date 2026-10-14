@@ -10,6 +10,14 @@ import { CAMERA_RIG, MOUSE_LOOK, normalizeSensitivity, thirdPersonCameraPose } f
 const WORLD_LIMIT = 52;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
+const JUNK_MESH_NAME_RE = /\b(floor|ground|stage|pedestal|stand|base|plane|shadow|bg|background|sky|dome|wall|env|environment|circle|ring|platform|turntable|studio|backdrop|collider|bbox)\b/i;
+
+function lerpAngle(current, target, alpha) {
+  let diff = ((target - current + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return current + diff * clamp01(alpha);
+}
+
 /**
  * Escena 3D Three.js para PokeBattle Survivor v0.4:
  * bosque procedural, compañero con movimientos propios, hordas regionales con élites,
@@ -88,6 +96,13 @@ export class GameApp {
     this.glbPending = new Map();
     this.activeMixers = [];
     this.aimLaserLine = null;
+    this.playerVisualGroup = null;
+    this.playerAnimRig = null;
+    this.playerBarGroup = null;
+    this.playerWalkPhase = 0;
+    this.playerVisualYaw = Math.PI;
+    this.playerAttackAnimTimer = 0;
+    this.playerGlbBones = null;
 
     this.handleResize = this.handleResize.bind(this);
     window.addEventListener('resize', this.handleResize);
@@ -383,7 +398,199 @@ export class GameApp {
   }
 
   /**
-   * Descarga y clona modelos 3D reales (.glb) desde Pokemon-3D-api/assets con soporte de animaciones.
+   * Extrae huesos o sub-nodos articulables de un modelo .glb para animar patas, alas, cabeza y cola
+   * incluso cuando el archivo .glb no incluye clips de animación embebidos.
+   */
+  extractProceduralBones(root) {
+    const bones = {
+      leftLegs: [],
+      rightLegs: [],
+      wingsOrArms: [],
+      headOrNeck: [],
+      tail: [],
+    };
+    root.traverse((node) => {
+      if (!node.isBone && !node.isObject3D) return;
+      if (node === root) return;
+      const name = (node.name || '').toLowerCase();
+      if (!name) return;
+      node.userData.restRotation = node.rotation.clone();
+
+      if (/(thigh|leg|foot|calf|shin|knee|ankle)/.test(name)) {
+        if (/(^l_|_l$|_l_|left|\.l$)/.test(name)) {
+          bones.leftLegs.push(node);
+        } else if (/(^r_|_r$|_r_|right|\.r$)/.test(name)) {
+          bones.rightLegs.push(node);
+        }
+      } else if (/(wing|arm|shoulder|hand|fin)/.test(name)) {
+        bones.wingsOrArms.push(node);
+      } else if (/(^head|neck)/.test(name)) {
+        bones.headOrNeck.push(node);
+      } else if (/tail/.test(name)) {
+        bones.tail.push(node);
+      }
+    });
+    return bones;
+  }
+
+  /**
+   * Calcula de forma segura la caja delimitadora (Box3) real de un modelo .glb:
+   * - Fuerza updateMatrixWorld(true) y skeleton.update() antes de medir (evita que SkinnedMesh
+   *   devuelva tamaño 0 y escale el modelo x1500 cubriendo todo el mapa).
+   * - Oculta pedestales, suelos, fondos o domos exportados de Sketchfab.
+   * - Combina tanto la geometría en coordenadas de mundo como la deformación por huesos.
+   */
+  computeSafeGlbBounds(root) {
+    // Actualizar primero TODA la jerarquía (incluyendo Armature y Bones) antes de evaluar SkinnedMesh
+    root.updateMatrixWorld(true);
+    const meshes = [];
+    root.traverse((node) => {
+      if ((node.isMesh || node.isSkinnedMesh) && node.geometry && node.visible) {
+        node.frustumCulled = false;
+        node.boundingBox = null;
+        if (node.isSkinnedMesh && node.skeleton) {
+          try {
+            for (const bone of node.skeleton.bones) {
+              bone.updateMatrixWorld(true);
+            }
+            node.skeleton.update();
+          } catch {
+            // Ignorar si algún hueso incompleto falla
+          }
+        }
+        meshes.push(node);
+      }
+    });
+
+    if (meshes.length > 1) {
+      const nonJunk = meshes.filter((m) => {
+        const meshName = `${m.name || ''} ${m.parent?.name || ''}`;
+        return !JUNK_MESH_NAME_RE.test(meshName);
+      });
+      if (nonJunk.length > 0 && nonJunk.length < meshes.length) {
+        for (const m of meshes) {
+          if (!nonJunk.includes(m)) m.visible = false;
+        }
+      }
+    }
+
+    const activeMeshes = meshes.filter((m) => m.visible);
+    const entries = [];
+    const sampleVec = new THREE.Vector3();
+
+    for (const mesh of activeMeshes) {
+      if (!mesh.geometry.boundingBox) {
+        mesh.geometry.computeBoundingBox();
+      }
+      const geoBox = mesh.geometry.boundingBox
+        ? mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld)
+        : new THREE.Box3();
+
+      let chosenBox = geoBox;
+      const posAttr = mesh.geometry.attributes?.position;
+      if (mesh.isSkinnedMesh && posAttr && posAttr.count > 0 && typeof mesh.applyBoneTransform === 'function') {
+        const skinnedBox = new THREE.Box3();
+        const step = Math.max(1, Math.floor(posAttr.count / 64));
+        for (let i = 0; i < posAttr.count; i += step) {
+          sampleVec.fromBufferAttribute(posAttr, i);
+          mesh.applyBoneTransform(i, sampleVec);
+          sampleVec.applyMatrix4(mesh.matrixWorld);
+          if (Number.isFinite(sampleVec.x) && Number.isFinite(sampleVec.y) && Number.isFinite(sampleVec.z)) {
+            skinnedBox.expandByPoint(sampleVec);
+          }
+        }
+        const skinSize = new THREE.Vector3();
+        if (!skinnedBox.isEmpty()) skinnedBox.getSize(skinSize);
+        const skinSpan = Math.max(skinSize.x, skinSize.y, skinSize.z);
+        if (Number.isFinite(skinSpan) && skinSpan > 0.002) {
+          chosenBox = skinnedBox;
+        }
+      }
+
+      const finalSize = new THREE.Vector3();
+      chosenBox.getSize(finalSize);
+      const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
+      if (Number.isFinite(maxDim) && maxDim > 0.0005) {
+        entries.push({ mesh, box: chosenBox, size: finalSize, maxDim });
+      }
+    }
+
+    // Si hay múltiples mallas, descartar planos de suelo planos o domos gigantescos (>7x la mediana)
+    let validEntries = entries;
+    if (entries.length > 1) {
+      const sortedDims = entries.map((e) => e.maxDim).sort((a, b) => a - b);
+      const medianDim = sortedDims[Math.floor(sortedDims.length / 2)] || 1;
+      const filtered = entries.filter((e) => {
+        const horiz = Math.max(e.size.x, e.size.z);
+        const isFlatFloor = e.size.y < horiz * 0.045 && horiz > medianDim * 1.65;
+        const isGiantDome = e.maxDim > medianDim * 7.5;
+        if (isFlatFloor || isGiantDome) {
+          e.mesh.visible = false;
+          return false;
+        }
+        return true;
+      });
+      if (filtered.length > 0) validEntries = filtered;
+    }
+
+    const combined = new THREE.Box3();
+    for (const entry of validEntries) {
+      combined.union(entry.box);
+    }
+
+    if (combined.isEmpty()) {
+      combined.setFromObject(root);
+    }
+    return combined;
+  }
+
+  /**
+   * Normaliza y centra `normGroup` en su propio espacio local (desacoplado de la posición del jugador
+   * o del enemigo en el mapa) para garantizar que ningún modelo .glb supere `targetHeight`.
+   */
+  enforceSafeModelScale(normGroup, clone, targetHeight) {
+    if (!normGroup || !clone) return;
+
+    const savedParent = normGroup.parent;
+    if (savedParent) savedParent.remove(normGroup);
+
+    normGroup.position.set(0, 0, 0);
+    normGroup.rotation.set(0, 0, 0);
+    normGroup.scale.set(1, 1, 1);
+    normGroup.updateMatrixWorld(true);
+
+    const box = this.computeSafeGlbBounds(normGroup);
+    if (!box.isEmpty()) {
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      // Envergadura efectiva considerando alto, ancho y largo (para que modelos anchos/largos tampoco tapen el mapa)
+      const effectiveSpan = Math.max(size.y, size.x * 0.82, size.z * 0.82);
+      if (Number.isFinite(effectiveSpan) && effectiveSpan > 0.001) {
+        const desiredScale = targetHeight / effectiveSpan;
+        const safeScale = Math.min(20, Math.max(0.0002, desiredScale));
+        normGroup.scale.setScalar(safeScale);
+        normGroup.updateMatrixWorld(true);
+
+        const postBox = this.computeSafeGlbBounds(normGroup);
+        if (!postBox.isEmpty()) {
+          const postCenter = new THREE.Vector3();
+          postBox.getCenter(postCenter);
+          normGroup.position.set(-postCenter.x, -postBox.min.y, -postCenter.z);
+          normGroup.updateMatrixWorld(true);
+        }
+      }
+    }
+
+    if (savedParent) {
+      savedParent.add(normGroup);
+      savedParent.updateMatrixWorld(true);
+    }
+  }
+
+  /**
+   * Descarga, normaliza y clona modelos 3D reales (.glb) desde Pokemon-3D-api/assets.
+   * Envuelve cada modelo en un grupo normalizado (normGroup) inmune a sobreescrituras de escala
+   * por AnimationMixer y extrae huesos para animación procedural 3D.
    */
   loadPokemon3dGlb(pokemonIdOrSpecies, { shiny = false, targetHeight = 1.45 } = {}, onReady) {
     const urls = getPokemonGlbCandidateUrls(pokemonIdOrSpecies, { shiny });
@@ -391,31 +598,41 @@ export class GameApp {
 
     const instantiateFromGltf = (gltf) => {
       const clone = SkeletonUtils.clone(gltf.scene);
-      const box = new THREE.Box3().setFromObject(clone);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
+      clone.position.set(0, 0, 0);
+      clone.rotation.set(0, 0, 0);
+      clone.scale.set(1, 1, 1);
 
-      const maxDim = Math.max(0.001, size.y, size.x * 0.8, size.z * 0.8);
-      const scale = targetHeight / maxDim;
-      clone.scale.setScalar(scale);
-
-      const scaledBox = new THREE.Box3().setFromObject(clone);
-      const scaledCenter = new THREE.Vector3();
-      scaledBox.getCenter(scaledCenter);
-      clone.position.x -= scaledCenter.x;
-      clone.position.z -= scaledCenter.z;
-      clone.position.y -= scaledBox.min.y;
+      const normGroup = new THREE.Group();
+      normGroup.add(clone);
 
       let mixer = null;
       if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(clone);
-        const clip = gltf.animations[0];
-        mixer.clipAction(clip).play();
+        // Preferir animación de movimiento/idle y filtrar pistas que sobreescriban la escala raíz
+        const preferredClip = gltf.animations.find((c) => /walk|run|move|idle|loop|fly|stand/i.test(c.name || ''))
+          ?? gltf.animations[0];
+        const safeClip = preferredClip.clone();
+        safeClip.tracks = safeClip.tracks.filter((track) => {
+          const trackName = track.name || '';
+          // Evitar que pistas de escala en el nodo raíz disparen el tamaño a x100 (escala FBX cm)
+          if (trackName === '.scale' || trackName === `${clone.name}.scale`) return false;
+          return true;
+        });
+        mixer.clipAction(safeClip).play();
+        // Avanzar un tick antes de medir para que la pose de los huesos ya esté aplicada
+        mixer.update(0.016);
         this.activeMixers.push(mixer);
       }
-      onReady?.(clone, mixer);
+
+      this.enforceSafeModelScale(normGroup, clone, targetHeight);
+      const proceduralBones = this.extractProceduralBones(clone);
+      normGroup.userData.clone = clone;
+      normGroup.userData.targetHeight = targetHeight;
+      normGroup.userData.framesChecked = 0;
+      normGroup.userData.proceduralBones = proceduralBones;
+      normGroup.userData.hasEmbeddedClips = Boolean(mixer);
+
+      onReady?.(normGroup, mixer, proceduralBones);
     };
 
     if (this.glbCache.has(cacheKey)) {
@@ -453,9 +670,107 @@ export class GameApp {
     tryNextUrl(0);
   }
 
+  /**
+   * Aplica animación 3D universal (salto de marcha, balanceo lateral tipo Torchic/Megabonk,
+   * inclinación de sprint, squash & stretch elástico, respiración en reposo y embestida al atacar)
+   * tanto a modelos .glb estáticos como a modelos con esqueleto.
+   */
+  animatePokemon3dRig(animRig, {
+    walkPhase = 0,
+    moveSpeed = 0,
+    isAirborne = false,
+    verticalVelocity = 0,
+    gliding = false,
+    attackTimer = 0,
+    elapsed = 0,
+    bones = null,
+    isBoss = false,
+  } = {}) {
+    if (!animRig) return;
+
+    const moving = moveSpeed > 0.04;
+    const ampScale = isBoss ? 0.55 : 1.0;
+
+    if (isAirborne) {
+      const stretchY = clamp01(Math.abs(verticalVelocity) * 0.025) * (verticalVelocity > 0 ? 1 : -0.5);
+      animRig.position.y = 0;
+      animRig.position.z = 0;
+      animRig.rotation.x = gliding ? 0.32 : Math.max(-0.28, Math.min(0.32, -verticalVelocity * 0.03));
+      animRig.rotation.z = gliding ? Math.sin(elapsed * 9) * 0.14 : 0;
+      animRig.rotation.y = 0;
+      animRig.scale.set(1 - stretchY * 0.45, 1 + stretchY, 1 - stretchY * 0.45);
+    } else if (moving) {
+      const strideSin = Math.sin(walkPhase);
+      const strideCos = Math.cos(walkPhase);
+      const bounce = Math.abs(strideSin);
+      // Salto rítmico de marcha desacoplado del círculo del suelo
+      animRig.position.y = bounce * 0.34 * ampScale;
+      // Balanceo lateral alegre (waddle) en cada paso + inclinación hacia adelante al correr
+      animRig.rotation.z = strideSin * 0.19 * ampScale;
+      animRig.rotation.x = (0.18 + Math.cos(walkPhase * 2) * 0.07) * ampScale;
+      animRig.rotation.y = strideCos * 0.14 * ampScale;
+      // Squash & stretch elástico al impulsar y aterrizar cada paso
+      const squash = Math.cos(walkPhase * 2) * 0.095 * ampScale;
+      animRig.scale.set(1 + squash * 0.75, 1 - squash, 1 + squash * 0.75);
+      animRig.position.z = 0;
+    } else {
+      // Respiración viva y curioso balanceo idle cuando está quieto
+      const breath = Math.sin(elapsed * 3.6);
+      animRig.position.y = Math.abs(Math.sin(elapsed * 1.9)) * 0.045 * ampScale;
+      animRig.position.z = 0;
+      animRig.rotation.x = breath * 0.03;
+      animRig.rotation.z = Math.sin(elapsed * 1.7) * 0.04;
+      animRig.rotation.y = Math.sin(elapsed * 1.1) * 0.06;
+      animRig.scale.set(1 - breath * 0.028, 1 + breath * 0.052, 1 - breath * 0.028);
+    }
+
+    // Embestida 3D hacia adelante cada vez que lanza un ataque básico o especial
+    if (attackTimer > 0) {
+      const p = Math.sin(clamp01(attackTimer / 0.22) * Math.PI);
+      animRig.position.z += p * 0.26;
+      animRig.rotation.x += p * 0.24;
+      animRig.scale.multiplyScalar(1 + p * 0.11);
+    }
+
+    // Si el modelo .glb tiene huesos detectados, articular patas, alas, cabeza y cola
+    if (bones) {
+      const legSwing = moving ? Math.sin(walkPhase) * 0.55 : 0;
+      for (const bone of bones.leftLegs) {
+        const rest = bone.userData.restRotation;
+        if (rest) bone.rotation.x = rest.x + legSwing;
+      }
+      for (const bone of bones.rightLegs) {
+        const rest = bone.userData.restRotation;
+        if (rest) bone.rotation.x = rest.x - legSwing;
+      }
+      for (let i = 0; i < bones.wingsOrArms.length; i += 1) {
+        const bone = bones.wingsOrArms[i];
+        const rest = bone.userData.restRotation;
+        const side = i % 2 === 0 ? 1 : -1;
+        if (rest) {
+          bone.rotation.z = rest.z + side * Math.sin(moving ? walkPhase : elapsed * 4) * (moving ? 0.28 : 0.1);
+        }
+      }
+      for (const bone of bones.tail) {
+        const rest = bone.userData.restRotation;
+        if (rest) bone.rotation.y = rest.y + Math.sin(moving ? walkPhase * 1.5 : elapsed * 4.5) * 0.26;
+      }
+      for (const bone of bones.headOrNeck) {
+        const rest = bone.userData.restRotation;
+        if (rest) bone.rotation.x = rest.x + Math.sin(moving ? walkPhase * 2 : elapsed * 3.2) * 0.09;
+      }
+    }
+  }
+
   addPlayer(starter) {
     this.player = new THREE.Group();
     this.player.position.set(0, 0, 0);
+
+    // Grupo visual independiente del anillo del suelo: rota hacia la dirección de marcha/apuntado
+    this.playerVisualGroup = new THREE.Group();
+    this.playerAnimRig = new THREE.Group();
+    this.playerVisualGroup.add(this.playerAnimRig);
+    this.player.add(this.playerVisualGroup);
 
     const isFlying = starter.types?.includes('Volador');
     const articulated = this.buildArticulated3dPokemonMesh({
@@ -464,18 +779,25 @@ export class GameApp {
       scale: 1.05,
       isFlying,
     });
-    this.player.add(articulated.root);
+    this.playerAnimRig.add(articulated.root);
     this.playerBodyMaterial = articulated.mainMat;
     this.playerArticulated = articulated;
+    this.playerGlbModel = null;
+    this.playerGlbBones = null;
+    this.playerWalkPhase = 0;
+    this.playerVisualYaw = this.session?.player?.rotationY ?? Math.PI;
+    this.playerAttackAnimTimer = 0;
 
-    // Cargar el modelo 3D .glb real de tu Pokémon y reemplazar el chasis cuando esté listo
+    // Cargar el modelo 3D .glb real de tu Pokémon y colocarlo en el rig de animación 3D
     this.loadPokemon3dGlb(
       starter.id,
-      { shiny: Boolean(this.runConfig?.isShiny), targetHeight: 1.55 },
-      (glbMesh) => {
-        if (!this.player) return;
+      { shiny: Boolean(this.runConfig?.isShiny), targetHeight: 1.5 },
+      (glbNormGroup, _mixer, proceduralBones) => {
+        if (!this.player || !this.playerAnimRig) return;
         articulated.root.visible = false;
-        this.player.add(glbMesh);
+        this.playerGlbModel = glbNormGroup;
+        this.playerGlbBones = proceduralBones;
+        this.playerAnimRig.add(glbNormGroup);
       },
     );
 
@@ -489,19 +811,22 @@ export class GameApp {
     this.playerShadow.position.y = 0.015;
     this.scene.add(this.playerShadow);
 
+    // El anillo del suelo se mantiene plano sobre el terreno sin inclinar ni bloquear al Pokémon
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.82, 0.038, 8, 36),
-      new THREE.MeshBasicMaterial({ color: '#00e5ff', transparent: true, opacity: 0.88 }),
+      new THREE.MeshBasicMaterial({ color: '#00e5ff', transparent: true, opacity: 0.82 }),
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.06;
+    ring.position.y = 0.05;
     this.player.add(ring);
     this.playerRing = ring;
 
-    // Barra de PS y Energía flotando bajo los pies del jugador (estilo Megabonk)
+    // Barra de PS y Escudo flotando bajo los pies, orientada siempre hacia la cámara
+    const barPivot = new THREE.Group();
     const barGroup = new THREE.Group();
-    barGroup.position.set(0, 0.12, 0.95);
+    barGroup.position.set(0, 0.12, 0.98);
     barGroup.rotation.x = -Math.PI / 3;
+    barPivot.add(barGroup);
 
     const bgBar = new THREE.Mesh(
       new THREE.PlaneGeometry(1.25, 0.18),
@@ -523,7 +848,8 @@ export class GameApp {
     hpBar.position.set(0, -0.03, 0.005);
     barGroup.add(hpBar);
 
-    this.player.add(barGroup);
+    this.player.add(barPivot);
+    this.playerBarGroup = barPivot;
     this.playerWorldHpFill = hpBar;
   }
 
@@ -691,7 +1017,10 @@ export class GameApp {
       specialPressed,
     });
 
-    if (events.attacks.length > 0) this.spawnAttackEffects(events.attacks);
+    if (events.attacks.length > 0) {
+      this.playerAttackAnimTimer = 0.22;
+      this.spawnAttackEffects(events.attacks);
+    }
     if (events.beams.length > 0) this.spawnBeamEffects(events.beams);
     if (events.hits.length > 0) this.spawnHitEffects(events.hits);
     if (events.defeated.length > 0) this.spawnDefeatEffects(events.defeated);
@@ -719,9 +1048,10 @@ export class GameApp {
     }
 
     const groundY = this.getTerrainHeight(this.session.player.x, this.session.player.z);
+    // El grupo raíz sigue el terreno sin rotar, manteniendo el círculo y la barra de PS estables
     this.player.position.set(
       this.session.player.x,
-      groundY + this.height + Math.sin(this.elapsed * 3.2) * 0.045,
+      groundY + this.height,
       this.session.player.z,
     );
     if (this.playerWorldHpFill) {
@@ -729,7 +1059,38 @@ export class GameApp {
       this.playerWorldHpFill.scale.x = Math.max(0.001, hpRatio);
       this.playerWorldHpFill.position.x = -(1 - hpRatio) * 1.2 * 0.5;
     }
-    this.player.rotation.y = this.session.player.rotationY;
+    if (this.playerBarGroup) {
+      this.playerBarGroup.rotation.y = this.cameraYaw - Math.PI;
+    }
+
+    const moveSpeed = Math.hypot(movement.x, movement.z);
+    const desiredYaw = moveSpeed > 0.04
+      ? Math.atan2(movement.x, movement.z)
+      : this.session.player.rotationY;
+    this.playerVisualYaw = lerpAngle(this.playerVisualYaw, desiredYaw, Math.min(1, delta * 14));
+    if (this.playerVisualGroup) {
+      this.playerVisualGroup.rotation.y = this.playerVisualYaw;
+    }
+
+    if (moveSpeed > 0.04 && this.height <= 0.05) {
+      const prevPhase = this.playerWalkPhase;
+      this.playerWalkPhase += delta * (13.5 + moveSpeed * 5.5);
+      // Pequeña estela de polvo 3D al pisar con cada zancada
+      if (Math.floor(prevPhase / Math.PI) !== Math.floor(this.playerWalkPhase / Math.PI)) {
+        this.spawnRingEffect(
+          this.session.player.x - Math.sin(this.playerVisualYaw) * 0.25,
+          this.session.player.z - Math.cos(this.playerVisualYaw) * 0.25,
+          this.runConfig.starter.accent || '#ffffff',
+          0.26,
+          0.22,
+          1.6,
+        );
+      }
+    } else {
+      this.playerWalkPhase = 0;
+    }
+
+    this.playerAttackAnimTimer = Math.max(0, this.playerAttackAnimTimer - delta);
 
     if (this.playerBodyMaterial) {
       if (this.session.player.hitFlash > 0) {
@@ -750,9 +1111,32 @@ export class GameApp {
     for (const mixer of this.activeMixers) {
       mixer.update(delta);
     }
+
+    // Re-verificación post-render durante los primeros frames para blindar el tamaño de modelos SkinnedMesh
+    if (this.playerGlbModel && this.playerGlbModel.userData.framesChecked < 4) {
+      this.playerGlbModel.userData.framesChecked += 1;
+      this.enforceSafeModelScale(
+        this.playerGlbModel,
+        this.playerGlbModel.userData.clone,
+        this.playerGlbModel.userData.targetHeight,
+      );
+    }
+
+    // Animar el rig 3D del jugador (funciona tanto para Torchic .glb estático como para modelos con huesos)
+    this.animatePokemon3dRig(this.playerAnimRig, {
+      walkPhase: this.playerWalkPhase,
+      moveSpeed,
+      isAirborne: this.height > 0.05,
+      verticalVelocity: this.verticalVelocity,
+      gliding,
+      attackTimer: this.playerAttackAnimTimer,
+      elapsed: this.elapsed,
+      bones: this.playerGlbBones,
+      isBoss: false,
+    });
+
     if (this.playerArticulated?.legs) {
-      const moveSpeed = Math.hypot(movement.x, movement.z);
-      const walkSwing = moveSpeed > 0.05 ? Math.sin(this.elapsed * 16) * 0.55 : 0;
+      const walkSwing = moveSpeed > 0.05 ? Math.sin(this.playerWalkPhase) * 0.58 : 0;
       this.playerArticulated.legs[0].rotation.x = walkSwing;
       this.playerArticulated.legs[1].rotation.x = -walkSwing;
       this.playerArticulated.legs[2].rotation.x = -walkSwing;
@@ -772,8 +1156,9 @@ export class GameApp {
       this.targetMarker.lookAt(this.camera.position);
     }
 
+    const hopOffset = this.playerAnimRig?.position.y ?? 0;
     if (this.aimLaserLine) {
-      const startY = this.player.position.y + 0.95;
+      const startY = this.player.position.y + hopOffset + 0.88;
       const positions = this.aimLaserLine.geometry.attributes.position;
       positions.setXYZ(0, this.player.position.x, startY, this.player.position.z);
       positions.setXYZ(1, aimX, aimY, aimZ);
@@ -781,7 +1166,10 @@ export class GameApp {
     }
 
     this.playerShadow.position.set(this.player.position.x, groundY + 0.02, this.player.position.z);
-    this.playerShadow.material.opacity = 0.42 - clamp01(this.height / 5) * 0.22;
+    const totalAir = this.height + hopOffset;
+    const shadowScale = Math.max(0.55, 1 - totalAir * 0.18);
+    this.playerShadow.scale.setScalar(shadowScale);
+    this.playerShadow.material.opacity = 0.44 - clamp01(totalAir / 4.5) * 0.24;
     this.playerRing.rotation.z += delta * 0.55;
 
     this.updateCamera(delta);
@@ -956,7 +1344,8 @@ export class GameApp {
         if (visual.airY === 0) visual.airVelY = 0;
       }
 
-      const walkSwing = Math.sin(this.elapsed * 14 + enemy.x) * 0.45;
+      const enemyPhase = this.elapsed * (enemy.isBoss ? 8.5 : 13.5) + (enemy.x + enemy.z) * 0.65;
+      const walkSwing = Math.sin(enemyPhase) * 0.48;
       if (visual.articulated?.legs) {
         visual.articulated.legs[0].rotation.x = walkSwing;
         visual.articulated.legs[1].rotation.x = -walkSwing;
@@ -964,14 +1353,33 @@ export class GameApp {
         visual.articulated.legs[3].rotation.x = walkSwing;
       }
 
-      const bob = Math.sin(this.elapsed * (enemy.isBoss ? 3.5 : 6.2) + enemy.x * 0.5) * 0.05;
+      if (visual.glbModel && visual.glbModel.userData.framesChecked < 4) {
+        visual.glbModel.userData.framesChecked += 1;
+        this.enforceSafeModelScale(
+          visual.glbModel,
+          visual.glbModel.userData.clone,
+          visual.glbModel.userData.targetHeight,
+        );
+      }
+
       const terrainY = this.getTerrainHeight(enemy.x, enemy.z);
-      visual.group.position.set(enemy.x, terrainY + visual.airY + Math.max(0, bob), enemy.z);
+      visual.group.position.set(enemy.x, terrainY + visual.airY, enemy.z);
       if (visual.crown) {
         visual.crown.rotation.y += 0.045;
       }
       visual.bodyGroup.rotation.y = enemy.rotationY;
-      visual.bodyGroup.rotation.x = visual.airY > 0.05 ? -0.35 : 0;
+
+      this.animatePokemon3dRig(visual.animRig, {
+        walkPhase: enemyPhase,
+        moveSpeed: enemy.speed ?? 1,
+        isAirborne: visual.airY > 0.05,
+        verticalVelocity: visual.airVelY,
+        gliding: false,
+        attackTimer: 0,
+        elapsed: this.elapsed,
+        bones: visual.glbBones,
+        isBoss: Boolean(enemy.isBoss || enemy.isMiniBoss),
+      });
 
       const hpRatio = clamp01(enemy.hp / enemy.maxHp);
       visual.hpFill.scale.x = Math.max(0.001, hpRatio);
@@ -982,12 +1390,10 @@ export class GameApp {
         visual.bodyMaterial.emissive.set('#ffffff');
         visual.bodyMaterial.emissiveIntensity = 0.85;
         visual.bodyGroup.scale.setScalar(1.12);
-        if (visual.enemySprite) visual.enemySprite.material.color.set('#ff9999');
       } else {
         visual.bodyMaterial.emissive.set(enemy.color);
         visual.bodyMaterial.emissiveIntensity = enemy.isBoss || enemy.isMiniBoss ? 0.32 : (enemy.isElite ? 0.22 : 0.12);
         visual.bodyGroup.scale.setScalar(1);
-        if (visual.enemySprite) visual.enemySprite.material.color.set('#ffffff');
       }
 
       if (visual.auraRing) {
@@ -1009,6 +1415,8 @@ export class GameApp {
   createEnemyVisual(enemy) {
     const group = new THREE.Group();
     const bodyGroup = new THREE.Group();
+    const animRig = new THREE.Group();
+    bodyGroup.add(animRig);
     group.add(bodyGroup);
 
     const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -1034,15 +1442,36 @@ export class GameApp {
       scale: baseScale,
       isFlying: enemy.shape === 'flyer' || enemy.types?.includes('Volador'),
     });
-    bodyGroup.add(articulated.root);
+    animRig.add(articulated.root);
+
+    const visualRecord = {
+      group,
+      bodyGroup,
+      animRig,
+      bodyMaterial,
+      auraRing: null,
+      hpFill: null,
+      barWidth: 0,
+      crown: null,
+      articulated,
+      glbModel: null,
+      glbBones: null,
+      airY: 0,
+      airVelY: 0,
+    };
+
+    // Altura máxima controlada para hordas, élites, minijefes y jefes (nunca gigantes desproporcionados)
+    const targetEnemyHeight = enemy.isBoss ? 2.65 : (enemy.isMiniBoss ? 1.95 : (enemy.isElite ? 1.55 : 1.18));
 
     // Cargar el modelo 3D .glb real de la especie enemiga/jefe (cacheado por especie)
     this.loadPokemon3dGlb(
       enemy.species,
-      { shiny: false, targetHeight: 1.25 * baseScale },
-      (glbMesh) => {
+      { shiny: false, targetHeight: targetEnemyHeight },
+      (glbNormGroup, _mixer, proceduralBones) => {
         articulated.root.visible = false;
-        bodyGroup.add(glbMesh);
+        visualRecord.glbModel = glbNormGroup;
+        visualRecord.glbBones = proceduralBones;
+        animRig.add(glbNormGroup);
       },
     );
 
@@ -1107,18 +1536,11 @@ export class GameApp {
       group.add(crown);
     }
 
-    return {
-      group,
-      bodyGroup,
-      bodyMaterial,
-      auraRing,
-      hpFill,
-      barWidth,
-      crown,
-      articulated,
-      airY: 0,
-      airVelY: 0,
-    };
+    visualRecord.auraRing = auraRing;
+    visualRecord.hpFill = hpFill;
+    visualRecord.barWidth = barWidth;
+    visualRecord.crown = crown;
+    return visualRecord;
   }
 
   syncOrbs(delta) {
