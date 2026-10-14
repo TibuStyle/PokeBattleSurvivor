@@ -851,10 +851,26 @@ export class MenuController {
           <div class="run-metrics">
             <div class="run-timer"><small>TIEMPO</small><b id="run-clock">${this.formatTime(hud.elapsedSeconds)}</b></div>
             <div class="run-timer"><small>DERROTADOS</small><b id="run-kills">${hud.kills}</b></div>
+            <div class="run-timer"><small>POKÉMONEDAS</small><b id="run-coins">🪙 ${hud.coinsInRun ?? 0}</b></div>
+            <div class="run-timer"><small>ALTARES</small><b id="run-shrines">⛩️ ${hud.shrinesCompleted ?? 0}/3</b></div>
             <div class="run-timer"><small>ORBES XP</small><b id="run-orbs">${hud.orbsCollected}</b></div>
           </div>
           <button class="hud-pause" data-action="pause-run" aria-label="Pausar partida">Ⅱ</button>
         </header>
+
+        <aside class="megabonk-radar-card" aria-label="Radar 3D de explorador">
+          <div id="run-radar-box" class="megabonk-radar-box">
+            ${this.renderRadarSvg(hud)}
+          </div>
+          <div class="megabonk-radar-legend">
+            <span><i class="dot dot--chest"></i>Cofre</span>
+            <span><i class="dot dot--shrine"></i>Altar</span>
+            <span><i class="dot dot--portal"></i>Portal</span>
+          </div>
+          <div id="run-loot-toast" class="megabonk-loot-pill">
+            ${this.renderEquippedAndLootPill(hud, run)}
+          </div>
+        </aside>
 
         <div id="pointer-lock-hint" class="pointer-lock-hint ${this.pointerLocked ? '' : 'is-visible'}" role="status">Haz clic en la arena para capturar el ratón · Esc libera y pausa</div>
 
@@ -1246,6 +1262,20 @@ export class MenuController {
 
     const orbs = this.root.querySelector('#run-orbs');
     if (orbs) orbs.textContent = String(this.hudState.orbsCollected ?? 0);
+
+    const coins = this.root.querySelector('#run-coins');
+    if (coins) coins.textContent = `🪙 ${this.hudState.coinsInRun ?? 0}`;
+
+    const shrines = this.root.querySelector('#run-shrines');
+    if (shrines) shrines.textContent = `⛩️ ${this.hudState.shrinesCompleted ?? 0}/3`;
+
+    const radarBox = this.root.querySelector('#run-radar-box');
+    if (radarBox) radarBox.innerHTML = this.renderRadarSvg(this.hudState);
+
+    const lootToast = this.root.querySelector('#run-loot-toast');
+    if (lootToast && this.flow.activeRun) {
+      lootToast.innerHTML = this.renderEquippedAndLootPill(this.hudState, this.flow.activeRun);
+    }
 
     const hpText = this.root.querySelector('#run-hp-text');
     if (hpText) hpText.textContent = `${this.hudState.hp} / ${this.hudState.maxHp} PS`;
